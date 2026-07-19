@@ -1,1 +1,67 @@
-.idea/
+# Python
+
+__pycache__/
+
+*.py[cod]
+
+*.egg-info/
+
+dist/
+
+build/
+
+*.so
+
+# Virtual environment — recreated from uv.lock, never commit
+
+.venv/
+
+# Model artifacts — DVC-tracked or large binaries
+
+artifacts/*.pt
+
+artifacts/*.pkl
+
+artifacts/*.pth
+
+artifacts/threshold.txt
+
+# Data — DVC-tracked, never commit raw data to Git
+
+data/raw/
+
+data/processed/
+
+# Jupyter
+
+.ipynb_checkpoints/
+
+# MLflow local tracking
+
+mlruns/
+
+mlartifacts/
+
+# OS
+
+.DS_Store
+
+*.swp
+
+Thumbs.db
+
+# Secrets
+
+.env
+
+*.key
+
+*.pem
+
+# Tool caches
+
+.ruff_cache/
+
+.mypy_cache/
+
+.pytest_cache/

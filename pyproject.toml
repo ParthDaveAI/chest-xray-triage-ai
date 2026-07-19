@@ -1,0 +1,137 @@
+[project]
+
+name = "p4-radiology-ai"
+
+version = "1.0.0"
+
+description = "Binary chest X-ray classification — Normal vs Suspicious — using EfficientNet-B0 transfer learning"
+
+requires-python = ">=3.10"
+
+dependencies = [
+
+    # Deep learning
+
+    "torch>=2.2.0",
+
+    "torchvision>=0.17.0",
+
+    # Data handling
+
+    "numpy>=1.26.0",
+
+    "pandas>=2.1.0",
+
+    "scikit-learn>=1.4.0",
+
+    # Serving
+
+    "fastapi>=0.110.0",
+
+    "uvicorn[standard]>=0.29.0",
+
+    "pydantic>=2.6.0",
+
+    "python-multipart>=0.0.9",
+
+    # Experiment tracking
+
+    "mlflow>=2.12.0",
+
+    # Data versioning
+
+    "dvc[gdrive]>=3.49.0",
+
+    # Configuration
+
+    "pyyaml>=6.0.1",
+
+    # Image processing
+
+    "pillow>=10.2.0",
+
+    "opencv-python-headless>=4.9.0",
+
+    # Visualisation
+
+    "matplotlib>=3.8.0",
+
+    # Statistics
+
+    "scipy>=1.13.0",
+
+]
+
+[project.optional-dependencies]
+
+dev = [
+
+    # Testing
+
+    "pytest>=8.1.0",
+
+    "pytest-asyncio>=0.23.0",
+
+    "httpx>=0.27.0",
+
+    # Linting and formatting
+
+    "ruff>=0.4.0",
+
+    # Type checking
+
+    "mypy>=1.9.0",
+
+    "types-PyYAML>=6.0.12",
+
+    # Security
+
+    "bandit>=1.7.8",
+
+    "pip-audit>=2.7.0",
+
+    # Notebook support
+
+    "jupyter>=1.0.0",
+
+    "nbconvert>=7.16.0",
+
+]
+
+[tool.ruff]
+
+line-length = 100
+
+target-version = "py310"
+
+[tool.ruff.lint]
+
+select = [
+
+    "E",    # pycodestyle errors
+
+    "F",    # pyflakes
+
+    "W",    # pycodestyle warnings
+
+    "I",    # isort
+
+    "UP",   # pyupgrade — enforces modern Python 3.10+ syntax (e.g. X | Y for unions)
+
+]
+
+ignore = ["E501"]
+
+[tool.mypy]
+
+python_version = "3.10"
+
+ignore_missing_imports = true
+
+warn_return_any = false
+
+[tool.pytest.ini_options]
+
+testpaths = ["tests"]
+
+asyncio_mode = "auto"
