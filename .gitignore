@@ -64,4 +64,4 @@ Thumbs.db
 
 .mypy_cache/
 
-.pytest_cache/
+.pytest_cache/.idea/
