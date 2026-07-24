@@ -1,0 +1,120 @@
+# ============================================================
+# P4 Radiology AI — Training Configuration
+# All hyperparameters, thresholds, and tunable values live here.
+# Zero magic numbers in Python code — always read from this file.
+# This config is the API between modules:
+#   dataset.py reads augmentation
+#   train.py reads learning rates and epochs
+#   evaluate.py reads thresholds and cost weights
+#   serve.py reads confidence tier boundaries
+# ============================================================
+
+# ── Data ────────────────────────────────────────────────────
+data:
+  dataset_path: "data/raw/images"
+  labels_path: "data/raw/Data_Entry_2017_v2020.csv"
+  image_size: 224            # EfficientNet-B0 standard input size
+  train_split: 0.70          # 70/15/15 split — see decisions.md Decision 2
+  val_split: 0.15
+  test_split: 0.15
+  random_seed: 42
+  # Development subset mode
+  # Set use_subset: true if you cannot download the full 42GB dataset.
+  # Results will NOT meet quality gates — subset is for pipeline verification only.
+  use_subset: true           # Using subset since we have limited local storage
+  subset_size: 5000          # Number of images to use in subset mode
+  # Pipeline failure threshold: if more than this fraction of image files
+  # are missing from disk, prepare_dataset() raises ValueError.
+  missing_file_threshold: 0.05
+
+# ── Augmentation ─────────────────────────────────────────────
+# Applied during TRAINING ONLY. Never during val or test.
+augmentation:
+  horizontal_flip: true       # Valid: patient can be imaged from either side
+  vertical_flip: false        # INVALID for X-rays — see decisions.md Decision 6
+  rotation_degrees: 15        # Simulates slight patient positioning variation
+  color_jitter: true          # Simulates different X-ray exposure settings
+  color_jitter_brightness: 0.2
+  color_jitter_contrast: 0.2
+
+# ── Model ────────────────────────────────────────────────────
+model:
+  architecture: "efficientnet_b0"
+  pretrained: true            # Load ImageNet weights — required for transfer learning
+  num_classes: 2              # Normal (0) vs Suspicious (1)
+  dropout: 0.3
+
+# ── Training ─────────────────────────────────────────────────
+training:
+  phase1_epochs: 10           # Frozen backbone — train classification head only
+  phase2_epochs: 15           # Unfrozen backbone — full fine-tuning
+  phase1_lr: 0.001
+  phase2_lr: 0.0001           # 10x lower — prevents catastrophic forgetting
+  batch_size: 32
+  weight_decay: 0.0001
+  early_stopping_patience: 5
+  random_seed: 42
+  use_amp: true               # Automatic Mixed Precision — ~40% faster on GPU
+                              # No effect on CPU — safe to leave true always
+
+# ── Evaluation ───────────────────────────────────────────────
+# LOCKED — all thresholds defined before any training run.
+evaluation:
+  # Quality gates — model must pass all three to be considered production-ready
+  recall_threshold: 0.80
+  precision_threshold: 0.60
+  auc_threshold: 0.85
+
+  # Three-tier confidence system boundaries (used in serve.py Decision Engine)
+  # Tier 1 (high):     confidence >= high_confidence_threshold → auto-priority queue
+  # Tier 2 (moderate): moderate <= confidence < high           → soft advisory note
+  # Tier 3 (low):      confidence < moderate_confidence_threshold → mandatory review
+  high_confidence_threshold: 0.80
+  moderate_confidence_threshold: 0.50
+
+  # Cost-sensitive evaluation weights
+  # Clinical cost asymmetry: FN (missed finding) = 5x worse than FP (false alarm)
+  # Used in evaluate.py: Expected Cost = fn_cost_weight * FN + fp_cost_weight * FP
+  fn_cost_weight: 5.0
+  fp_cost_weight: 1.0
+
+  # Calibration baseline — a model predicting 0.5 always gets exactly 0.25
+  brier_naive_baseline: 0.25
+
+# ── Serving ──────────────────────────────────────────────────
+serving:
+  latency_sla_ms: 500         # Server-side processing latency p99 SLA
+  model_version: "1.0.0"
+
+  # Image validation thresholds used by validate_image() in serve.py
+  min_image_size: 64          # Minimum dimension (width or height) in pixels
+  min_contrast_std: 10.0      # Minimum pixel std dev — rejects near-blank images
+  max_file_size_mb: 10.0      # Maximum upload size to prevent timeout attacks
+
+# ── Experiment Tracking ───────────────────────────────────────
+# Controls what reproducibility metadata is logged to every MLflow run.
+# Both must be true for the full reproducibility chain:
+#   prediction → MLflow run ID → git hash (code) + DVC hash (data) + config (params)
+experiment:
+  track_git_hash: true        # Log git commit hash to MLflow params
+  track_dvc_hash: true        # Log DVC dataset hash to MLflow params
+  mlflow_experiment_name: "p4-radiology-ai"
+
+# ── Compliance and PHI Safety ────────────────────────────────
+# Establishes data privacy principles before any data processing code is written.
+# These values are read by serve.py (L11) and data_prep.py (L2).
+compliance:
+  log_phi: false              # Never log raw images or patient-identifiable data
+  hash_patient_id: true       # SHA256 hash all identifiers in trace logs
+  retention_days: 30          # Conceptual: auto-delete traces after 30 days
+
+# ── DVC Remote ───────────────────────────────────────────────
+dvc:
+  remote_name: "myremote"
+  # Replace YOUR_GDRIVE_FOLDER_ID with your actual Google Drive folder ID.
+  # Get it from the URL when you open the folder in Google Drive:
+  # https://drive.google.com/drive/folders/YOUR_GDRIVE_FOLDER_ID
+  remote_url: "gdrive://YOUR_GDRIVE_FOLDER_ID"
+  # Production path: S3 bucket with IAM roles for PHI isolation
+  # s3://your-bucket/p4-radiology-ai/
+  # See decisions.md Decision 3 for the full production transition plan.
