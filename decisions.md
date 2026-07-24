@@ -165,3 +165,72 @@ C. Patient-level weighted sampling: Each image's loss weight = 1/patient_image_c
 
 **Decision:** B — Cap images per patient at 10 images. This directly addresses
 the dominance issue while preserving patient-level split integrity.
+
+---
+
+## Decision 7: Vertical Flip Disabled — Clinical Correctness
+
+**Date:** July 23, 2026
+
+**Decision:** vertical_flip: false in training_config.yaml — permanent.
+
+**Clinical reasoning:**
+
+Lung anatomy is NOT vertically symmetric:
+
+  - Right hemidiaphragm is elevated by the liver (higher than left)
+  - Heart position has vertical clinical significance
+  - Air-fluid levels are gravity-dependent — pool at the bottom of cavities
+  - Trachea and carina have specific vertical spatial relationships
+
+A vertically flipped chest X-ray is anatomically impossible. No patient
+has this presentation. Training on impossible images teaches the model
+incorrect spatial anatomy. This is a patient safety consideration.
+
+**Implementation guard:** _build_train_transform() logs a logger.error
+if vertical_flip is ever set to True in config — the error is explicit
+and immediate rather than silent.
+
+**Rejected:** enabling vertical flip as a standard augmentation.
+
+---
+
+## Decision 8: Config-Driven Augmentation
+
+**Date:** July 23, 2026
+
+**Decision:** All augmentation parameters read from training_config.yaml.
+
+**Rationale:** MLflow logs the full config for every training run. Config-driven
+augmentation makes every augmentation experiment automatically trackable,
+reproducible, and auditable. Hardcoded values require code changes and code
+diffs — config changes create YAML diffs that are cleaner experiment records.
+
+**Rejected:** hardcoded transform values in dataset.py.
+
+---
+
+## Decision 9: Horizontal Flip — Open Clinical Review Required
+
+**Date:** July 23, 2026
+
+**Status:** OPEN — pending clinical advisor review
+
+**Current setting:** horizontal_flip: true
+
+**Context:** Standard ML papers use horizontal flip for chest X-rays to
+increase effective dataset size. Patient positioning varies left/right.
+
+**Clinical concern:** Horizontal flip reverses the heart shadow, simulating
+situs inversus (dextrocardia) — a rare congenital condition where the heart
+points to the right. This is anatomically valid (the condition exists) but
+rare (~0.01% of population). Training on many flipped images may confuse
+the model's representation of normal cardiac position.
+
+**Action required:** Clinical domain advisor (pathologist) to review this
+specific augmentation choice. If advisor confirms it is acceptable for
+a screening tool: close decision as "approved". If advisor overrides:
+set horizontal_flip: false and document clinical reasoning here.
+
+**Not rejected yet:** horizontal flip is used in this portfolio version
+while awaiting clinical confirmation.
