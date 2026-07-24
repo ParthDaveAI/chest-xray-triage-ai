@@ -1,0 +1,40 @@
+{
+  "eda_version": "1.0",
+  "eda_scope": "training_split_only",
+  "class_distribution": {
+    "normal_count": 4270,
+    "suspicious_count": 3114,
+    "normal_pct": 57.83,
+    "suspicious_pct": 42.17
+  },
+  "view_position": {
+    "ap_susp_pct": 47.68,
+    "pa_susp_pct": 37.68,
+    "gap_pp": 9.99,
+    "risk_flag": "NO"
+  },
+  "long_tail": {
+    "total_patients": 1864,
+    "total_images": 7384,
+    "top_patient_image_count": 108,
+    "top_patient_pct": 1.463,
+    "threshold_exceeded": "YES"
+  },
+  "pixel_intensity": {
+    "normal_mean_intensity": 142.57,
+    "suspicious_mean_intensity": 135.65,
+    "mean_intensity_diff": 6.92
+  },
+  "demographic_stats": {
+    "gender_stats": {
+      "M": {
+        "count": 4145,
+        "suspicious_pct": 42.03
+      },
+      "F": {
+        "count": 3239,
+        "suspicious_pct": 42.36
+      }
+    }
+  }
+}
