@@ -234,3 +234,90 @@ set horizontal_flip: false and document clinical reasoning here.
 
 **Not rejected yet:** horizontal flip is used in this portfolio version
 while awaiting clinical confirmation.
+
+---
+
+## Decision 10: EfficientNet-B0 over ResNet-50 over Custom CNN over ViT
+
+**Date:** July 24, 2026
+
+**Custom CNN from scratch — rejected:**
+
+Insufficient training data (112K images) for learning rich visual representations
+from random initialisation. Would significantly underfit.
+
+**ViT (Vision Transformer base) — rejected:**
+
+Three reasons: (1) Lower sample efficiency than CNN — ViT lacks CNN's spatial
+locality and translational equivariance inductive biases, requiring more pretraining
+data for comparable performance when fine-tuning on 112K images. (2) Higher CPU
+inference latency (~200ms+) exceeds EfficientNet-B0's ~80ms, tighter SLA headroom.
+(3) Grad-CAM explainability (L9) works on convolutional feature maps — ViT's
+patch-based attention requires a different, separate explainability implementation.
+
+**ResNet-50 — rejected:**
+
+25.6M parameters vs 5.3M. ~120ms CPU inference vs ~80ms. ~100MB weights vs ~25MB.
+Marginal accuracy improvement (76.1% vs 77.1% ImageNet Top-1) does not justify
+the inference, memory, and container size penalties.
+
+**EfficientNet-B0 — chosen:**
+
+5.3M parameters. 77.1% ImageNet Top-1. ~80ms CPU inference. ~25MB weights.
+Compound scaling (depth × width × resolution simultaneously) achieves better
+accuracy-per-parameter than any single-dimension scaling. All three constraints
+(SLA, container size, sample efficiency) are met.
+
+Note: An empirical comparison (training both EfficientNet-B0 and ResNet-50 on
+this dataset and measuring test recall) would provide stronger evidence than
+published benchmarks alone. For a portfolio project with limited compute,
+the benchmark-based justification is defensible. Document this limitation.
+
+---
+
+## Decision 11: Replace Final Classifier Layer + BatchNorm Freeze Protocol
+
+**Date:** July 24, 2026
+
+**Replace final layer only:**
+
+Preserve 99%+ of pretrained backbone. Replace only
+`Sequential(Dropout(0.2), Linear(1280, 1000))` with
+`Sequential(Dropout(0.3), Linear(1280, 2))`.
+
+**Higher dropout rate (0.3 vs 0.2):**
+
+Original model trained on 1.2M diverse images. Our head trains on ~78K chest
+X-rays. Less data → more overfitting risk → higher dropout.
+
+**Explicit Xavier uniform head initialisation:**
+
+Removes training run variance from PyTorch's default Kaiming initialisation.
+Symmetric initial logit distribution with zero bias improves early convergence
+and reproducibility, especially with class imbalance.
+
+**BatchNorm freeze protocol — overriding train():**
+
+requires_grad=False freezes weights and biases but NOT BatchNorm running_mean
+and running_var. Without the train() override, BN stats in the frozen backbone
+update toward X-ray statistics while conv weights remain calibrated to ImageNet
+statistics — a mismatch that silently degrades Phase 1 accuracy.
+
+The overridden train() method forces all BatchNorm2d layers in backbone.features
+to eval() mode whenever the backbone is frozen, preserving pretrained BN stats.
+
+**Momentum reset on Phase 1→2 transition:**
+
+L6 creates a NEW Adam optimizer for Phase 2, explicitly discarding Phase 1
+momentum buffers. This is a deliberate choice — starting Phase 2 with equal
+(zero) momentum for all parameters, rather than asymmetric momentum (head with
+10 epochs of history, backbone with none).
+
+**Differential learning rates (not implemented — documented alternative):**
+
+Production fine-tuning sometimes assigns lower learning rates to earlier layers:
+  backbone_lr = 1e-5, head_lr = 1e-3
+
+This provides more granular control over backbone refinement rate.
+For this project, the two-phase approach (uniform Phase 2 lr) achieves the
+same goal with simpler code. Differential LR is the documented upgrade path.
