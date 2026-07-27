@@ -321,3 +321,54 @@ Production fine-tuning sometimes assigns lower learning rates to earlier layers:
 This provides more granular control over backbone refinement rate.
 For this project, the two-phase approach (uniform Phase 2 lr) achieves the
 same goal with simpler code. Differential LR is the documented upgrade path.
+
+---
+
+## Decision 12: AMP (Automatic Mixed Precision) for GPU Training
+
+**Date:** July 27, 2026
+
+**Decision:** Use torch.autocast (PyTorch 2.x API) with GradScaler during GPU training.
+
+**API note:** PyTorch 2.x deprecated torch.cuda.amp.autocast in favour of the
+device-agnostic torch.autocast. Import as: from torch import autocast.
+
+**Benefit:** ~40% faster training on NVIDIA GPUs with Tensor Cores. ~50% VRAM reduction.
+No meaningful accuracy loss when gradient clipping and GradScaler are used correctly.
+
+**CPU behaviour:** autocast is a no-op when disabled. Setting use_amp: true in
+config is always safe — on CPU it runs full float32.
+
+**Validation decision:** Validation runs in full float32 (no AMP) for deterministic,
+reproducible results directly comparable to test evaluation in L7. For a clinical tool
+where evaluation reproducibility matters, this is the defensible choice. Production
+inference stacks may use fp16 when throughput matters more than exact reproducibility.
+
+**Gradient clipping integration (critical ordering):**
+scaler.scale(loss).backward() → scaler.unscale_(optimizer) → clip_grad_norm_() →
+scaler.step(optimizer) → scaler.update()
+
+Clipping MUST happen after unscale_(), not before. Clipping scaled gradients
+produces unpredictable effective thresholds.
+
+**Rejected:** Full float32 training — ~3-4h on T4 vs ~2h with AMP.
+
+---
+
+## Decision 13: Adam over SGD with Momentum
+
+**Date:** July 27, 2026
+
+**Decision:** Adam with weight_decay for both phases.
+
+**Reason:** Per-parameter adaptive learning rate handles heterogeneous gradient
+magnitudes better in fine-tuning. Early backbone layers produce much smaller gradients
+than later layers. Adam compensates automatically. Faster convergence matters for
+compute-constrained single-session training.
+
+**Phase 1→2 optimizer:** A NEW Adam is created for Phase 2, deliberately discarding
+Phase 1 momentum. Head has built-up momentum; backbone has zero. New optimizer
+gives all parameters equal (zero) starting momentum for balanced Phase 2 updates.
+
+**Rejected:** SGD with momentum — valid for extended training, marginal generalisation
+benefit, slower convergence in compute-constrained settings.
