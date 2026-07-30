@@ -372,3 +372,62 @@ gives all parameters equal (zero) starting momentum for balanced Phase 2 updates
 
 **Rejected:** SGD with momentum — valid for extended training, marginal generalisation
 benefit, slower convergence in compute-constrained settings.
+
+---
+
+## Decision 14: Platt Scaling — ECE-Based Conditional Application
+
+**Date:** July 27, 2026
+
+**Decision:** Apply Platt scaling if val Expected Calibration Error (ECE) > 0.05.
+
+**Context:** Fine-tuned CNNs often over-estimate confidence. Platt scaling (logistic
+regression on raw scores) corrects probability distributions.
+
+**Why ECE over Brier score as trigger:** Brier score conflates accuracy and calibration.
+A model with poor accuracy but good calibration has a bad Brier score — triggering
+Platt scaling would add complexity without improving calibration. ECE directly
+measures the calibration gap: average |predicted probability - observed frequency|
+weighted by bin size.
+
+**Threshold ECE=0.05:** 5% average calibration gap. Below this, the model is
+sufficiently well-calibrated for clinical use.
+
+**When fitted:** On VALIDATION raw scores only. Training = overfitting risk.
+Test = calibration leakage. Validation is the only correct choice.
+
+**Correct sequence:** Fit Platt on val → calibrate val → tune threshold on calibrated
+val → calibrate test → apply threshold. Tuning threshold BEFORE calibration is a
+silent bug because Platt changes the probability space.
+
+**Rejected:** Always applying Platt (unnecessary complexity when well-calibrated);
+applying to test (leakage).
+
+---
+
+## Decision 15: Threshold Tuning on Calibrated Validation Data
+
+**Date:** July 27, 2026
+
+**Decision:** Threshold tuned on calibrated VALIDATION probabilities. Locked in
+artifacts/threshold.txt. Never adjusted based on test results.
+
+**Why validation, not training:**
+Training probabilities are overconfident — the model has memorised training data,
+producing probabilities heavily skewed toward 0 and 1. A threshold optimised on
+this overconfident distribution does not generalise to deployment.
+Validation probabilities are representative of deployment-like uncertainty.
+
+**Why not training AND why not test:**
+Standard ML methodology assigns split responsibilities:
+  Train → fit model weights
+  Validation → tune hyperparameters, calibration, threshold
+  Test → final frozen evaluation (touched once)
+
+**Why calibrated probs:**
+If Platt scaling is applied, the threshold must be tuned in the calibrated probability
+space. Tuning on raw probs then applying to calibrated probs produces an invalid
+threshold.
+
+**If test metrics are disappointing:** Retrain the model. Never adjust the threshold
+to make metrics look better.
