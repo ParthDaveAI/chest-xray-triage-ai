@@ -431,3 +431,49 @@ threshold.
 
 **If test metrics are disappointing:** Retrain the model. Never adjust the threshold
 to make metrics look better.
+
+---
+
+## Decision 16: Model Confidence = max(P, 1-P) NOT P(Suspicious)
+
+**Date:** July 27, 2026
+
+**Decision:** Model confidence is defined as max(P(Suspicious), 1-P(Suspicious)).
+Triage tier is defined separately based on P(Suspicious) thresholds.
+
+**Why this matters:**
+P=0.02 is NOT low confidence — it is 98% confidence Normal. Labeling a P=0.02
+prediction as "low confidence" is factually incorrect and would mislead the
+clinical advisor about the nature of the failure. A high-confidence FN
+(model was 98% sure it was Normal, was actually Suspicious) is qualitatively
+different from a low-confidence FN (model was uncertain, near 50/50 boundary).
+
+**Distinction:**
+- Triage Tier = routing decision (based on P(Suspicious))
+- Model Confidence = uncertainty measure (based on max(P, 1-P))
+
+These are independent axes. A Tier 2 image (P=0.52) has model_confidence=0.52.
+This is expected — the system flags it because FN cost outweighs FP cost.
+
+**Rejected:** Using P(Suspicious) as "confidence" (incorrect — P=0.02 is high confidence).
+
+---
+
+## Decision 17: Stratified Bootstrap for Demographic Subgroup Recall CI
+
+**Date:** July 27, 2026
+
+**Decision:** Bootstrap confidence intervals for recall by demographic subgroup
+use stratified resampling (Suspicious and Normal cases resampled separately
+to preserve class ratio in each bootstrap sample).
+
+**Why bootstrap CI is required:**
+Reporting a 4pp recall gap between gender groups without a CI is incomplete.
+With small subgroup N, a 4pp gap could be pure sampling noise. Bootstrap CI
+quantifies whether the gap is robust or coincidental.
+
+**Interpretation rule:**
+- If CI excludes zero: gap is likely robust → report as finding
+- If CI spans zero: gap may be sampling noise → do not report as finding
+
+**Rejected:** Reporting subgroup recall without CI (statistically incomplete).
