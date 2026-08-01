@@ -529,3 +529,95 @@ of granularity.
 For very high-confidence predictions, softmax gradients are near zero — Grad-CAM
 heatmaps appear flat. This is a known limitation, not a bug. Flat heatmaps for
 high-confidence wrong predictions are informative: the model had no localised signal.
+
+---
+
+## Decision 19: Equal Opportunity as Primary Fairness Metric
+
+**Date:** July 31, 2026
+
+**IMPORTANT FRAMING:**
+
+Equal Opportunity is the correct PRIMARY metric for THIS specific use case.
+
+It is not the universally superior fairness metric. The choice depends on the
+
+harm model, application context, and stakeholder priorities.
+
+**Equal Opportunity:** P(ŷ=1 | y=1, group=A) ≈ P(ŷ=1 | y=1, group=B)
+
+**Clinical justification:**
+
+fn_weight=5 >> fp_weight=1. Differential miss rates = differential clinical harm.
+
+Equal recall across groups = equal probability of detection = clinical equity.
+
+**Why not demographic parity:**
+
+Actual Suspicious prevalence differs by demographic. A correct model predicting
+
+accurate disease rates fails demographic parity. Demographic parity penalises
+
+accurate predictions when prevalence is unequal across groups.
+
+**Why equalized odds is secondary:**
+
+Equalized odds requires equal recall AND FP rate. Constraining FP rate equality
+
+may require reducing recall for one group to match another's FP rate — trading
+
+clinical harm (miss rates) for statistical parity on a less important metric.
+
+**Additional metrics monitored alongside Equal Opportunity:**
+
+  Calibration fairness: subgroup ECE and Brier score (are probabilities equally
+
+  trustworthy across subgroups?)
+
+  Predictive parity: optional further analysis (not primary for screening)
+
+**Fairness threshold: 0.05 (5pp recall gap).**
+
+This is a policy-defined threshold — not scientifically derived.
+
+Appropriate threshold depends on disease severity, healthcare setting, prevalence,
+
+and operational constraints. Reviewed and documented by clinical advisor.
+
+**Multiple comparisons note:**
+
+This analysis is exploratory. For confirmatory regulatory submission, apply
+
+Bonferroni correction: adjusted α = 0.05 / n_comparisons.
+
+---
+
+## Decision 20: Fairness-Aware Threshold — Documented Option, Not Implemented
+
+**Date:** July 31, 2026
+
+**Context:** If recall gap > 0.05, a lower threshold for the disadvantaged subgroup
+
+increases their recall at the cost of higher FP rate for that group.
+
+**Benefit:** Restored recall parity — equal clinical benefit for all patients.
+
+**Cost:** Higher FP rate for the advantaged group (increased workload).
+
+**Regulatory concern:** Demographic-based decision thresholds may require
+
+explicit regulatory justification in some jurisdictions.
+
+**Implementation path (if clinical/regulatory sign-off obtained):**
+
+1. For each subgroup with gap > threshold: find threshold giving recall within 0.02
+
+   of the highest-recall group.
+
+2. Serve threshold as a dict keyed by demographic attribute.
+
+3. At inference: look up patient demographic, apply their threshold.
+
+4. Document in model card under Deployment Constraints.
+
+**Current status:** Documented. Not implemented. Requires sign-off.
