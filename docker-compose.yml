@@ -1,0 +1,26 @@
+version: "3.9"
+
+services:
+  radiology-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    image: p4-radiology-serving:latest
+    container_name: p4-radiology-api
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./artifacts:/app/artifacts:ro
+      - ./config:/app/config:ro
+    environment:
+      - LOG_LEVEL=INFO
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s

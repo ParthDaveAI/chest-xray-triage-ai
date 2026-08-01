@@ -621,3 +621,30 @@ explicit regulatory justification in some jurisdictions.
 4. Document in model card under Deployment Constraints.
 
 **Current status:** Documented. Not implemented. Requires sign-off.
+
+---
+
+## Decision 21: CPU-Only Docker for Serving
+
+**Date:** August 1, 2026
+
+**Decision:** CPU-only PyTorch base image for the serving container.
+
+**Latency:** EfficientNet-B0 achieves ~80ms CPU inference (single image).
+500ms p99 SLA has ~420ms headroom. CPU is sufficient.
+
+**Container size:** CPU-only torch wheel ~1.2GB. CUDA-enabled torch ~2.5GB.
+Final image ~1.5GB vs ~5GB CUDA equivalent.
+
+**Implementation requirement:**
+Standard pip/uv on Linux installs CUDA-bundled torch by default even without
+a GPU. The Dockerfile MUST include:
+  --extra-index-url https://download.pytorch.org/whl/cpu
+
+Without this, the container is ~5GB despite the CPU-only intent.
+
+**Deployment universality:** Runs on any cloud instance or on-premises server.
+
+**Production upgrade path:** torch.compile(model, backend="inductor") for
+CPU optimisation. If throughput exceeds CPU limits: ONNX Runtime with
+thread tuning, then GPU inference with CUDA image.

@@ -1,0 +1,40 @@
+# Exclude large data and irrelevant files from Docker build context.
+# Without .dockerignore, `COPY . .` would include the 42GB dataset and
+# slow down every `docker build` dramatically.
+
+# Dataset (never in image — tracked by DVC)
+data/
+
+# Development artifacts
+notebooks/
+reports/
+.dvc/
+.git/
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Test files (not needed in serving image)
+tests/
+
+# Development tools
+.env
+*.env
+.venv/
+.mypy_cache/
+.ruff_cache/
+
+# Model training artifacts NOT needed in serving
+artifacts/best_phase1.pt
+artifacts/test_df.parquet
+artifacts/val_df.parquet
+artifacts/fp_cases.parquet
+artifacts/fn_cases.parquet
+
+# Documentation
+docs/
+*.md
