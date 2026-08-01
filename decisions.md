@@ -477,3 +477,55 @@ quantifies whether the gap is robust or coincidental.
 - If CI spans zero: gap may be sampling noise → do not report as finding
 
 **Rejected:** Reporting subgroup recall without CI (statistically incomplete).
+
+---
+
+## Decision 18: Grad-CAM over SHAP for CNN Spatial Explainability
+
+**Date:** July 31, 2026
+
+**FRAMING REQUIREMENT:**
+
+Grad-CAM is presented as a spatial localisation audit tool, NOT as a reasoning
+explanation. These are different things. A heatmap focused on the correct anatomy
+is necessary but not sufficient evidence of clinically sound reasoning.
+
+**SHAP DeepExplainer — rejected for primary explainability:**
+
+Pixel-level attributions (50,176 values for 224×224) — clinically uninterpretable
+as a spatial map. 5–30 seconds per image. Cannot easily answer "which anatomy region
+drove this prediction."
+
+**Grad-CAM — chosen:**
+
+Region-level heatmap (49 effective bins from 7×7 feature maps, upsampled to 224×224).
+Clinicians can assess anatomy focus. Sub-100ms. Direct overlay on X-ray.
+
+**SHAP is not universally inferior for CNNs:**
+
+Integrated Gradients provides finer-grained pixel attribution without the gradient
+saturation problem. For high-confidence predictions where Grad-CAM produces flat
+heatmaps (saturated gradients), Integrated Gradients is the documented upgrade path.
+The choice of Grad-CAM here is a trade-off: speed and interpretability at the cost
+of granularity.
+
+**Correct tool selection by model type:**
+  Gradient boosting (P3): SHAP TreeExplainer (exact Shapley values)
+  CNNs (P4): Grad-CAM on last convolutional layer (spatial heatmaps)
+  Transformers/LLMs: Attention maps, LIME
+  Future upgrade path: Integrated Gradients for finer attribution
+
+**Critical implementation requirements:**
+  - requires_grad_(True) on input tensor: ensures computational graph is built
+    even when model weights are frozen for inference optimisation
+  - Hook removal via try/finally: prevents memory leaks and gradient corruption
+  - model.eval(): required for consistent BN activations (asserted in code)
+  - No torch.no_grad(): gradients are required (tension with model.eval() is correct)
+  - Heatmap-as-mask blending: preserves diagnostic quality in non-activated regions
+  - INFERNO colormap: perceptually uniform, no false colour boundaries (JET rejected)
+
+**Gradient saturation limitation:**
+
+For very high-confidence predictions, softmax gradients are near zero — Grad-CAM
+heatmaps appear flat. This is a known limitation, not a bug. Flat heatmaps for
+high-confidence wrong predictions are informative: the model had no localised signal.
