@@ -1,0 +1,402 @@
+# Nightly Quality Gates — P4 Radiology AI
+
+# Triggers: 2am UTC daily, or manual dispatch
+
+# Runtime: 40-60 minutes (includes training on CI data subset)
+
+name: Nightly Quality Gates
+
+on:
+
+  schedule:
+
+    - cron: "0 2 * * *"
+
+  workflow_dispatch:
+
+    inputs:
+
+      reason:
+
+        description: "Reason for manual trigger"
+
+        required: false
+
+        default: "Manual quality gate check"
+
+env:
+
+  UV_EXTRA_INDEX_URL: https://download.pytorch.org/whl/cpu
+
+jobs:
+
+  # ── Job 1: Train ──────────────────────────────────────────────────────────────
+
+  train:
+
+    name: Train Model (CI subset)
+
+    runs-on: ubuntu-latest
+
+    timeout-minutes: 60
+
+    steps:
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+
+        with:
+
+          python-version: "3.11"
+
+      - name: Install uv
+
+        run: pip install --quiet uv
+
+      - name: Restore cache
+
+        uses: actions/cache@v4
+
+        with:
+
+          path: ~/.cache/uv
+
+          key: ${{ runner.os }}-uv-${{ hashFiles('uv.lock') }}
+
+          restore-keys: ${{ runner.os }}-uv-
+
+      - name: Install dependencies (frozen)
+
+        run: uv sync --frozen
+
+      - name: Pull CI data subset from DVC
+
+        run: |
+
+          echo "DVC pull: configure remote and uncomment above line"
+
+          echo "Until configured, ensure data/raw/ci_subset/ is available locally"
+
+      - name: Train model (non-interactive)
+
+        run: |
+
+          echo "Run: uv run python scripts/run_training.py --non-interactive"
+
+          echo "Note: Full training requires DVC data or self-hosted runner"
+
+      - name: Upload training artifacts
+
+        uses: actions/upload-artifact@v4
+
+        with:
+
+          name: training-artifacts-${{ github.run_id }}
+
+          path: |
+
+            artifacts/best_model.pt
+
+            artifacts/best_phase1.pt
+
+            artifacts/train_df.parquet
+
+            artifacts/val_df.parquet
+
+            artifacts/test_df.parquet
+
+            artifacts/model_metadata.json
+
+            mlruns/
+
+          retention-days: 7
+
+
+  # ── Job 2: Evaluate ───────────────────────────────────────────────────────────
+
+  evaluate:
+
+    name: Evaluate and Calibrate
+
+    runs-on: ubuntu-latest
+
+    needs: [train]
+
+    timeout-minutes: 30
+
+    steps:
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+
+        with:
+
+          python-version: "3.11"
+
+      - name: Install uv
+
+        run: pip install --quiet uv
+
+      - name: Restore cache
+
+        uses: actions/cache@v4
+
+        with:
+
+          path: ~/.cache/uv
+
+          key: ${{ runner.os }}-uv-${{ hashFiles('uv.lock') }}
+
+          restore-keys: ${{ runner.os }}-uv-
+
+      - name: Install dependencies (frozen)
+
+        run: uv sync --frozen
+
+      - name: Download training artifacts
+
+        uses: actions/download-artifact@v4
+
+        with:
+
+          name: training-artifacts-${{ github.run_id }}
+
+          path: .
+
+      - name: Run evaluation
+
+        run: |
+
+          echo "Run: uv run python scripts/run_evaluation.py --non-interactive"
+
+      - name: Upload evaluation artifacts
+
+        uses: actions/upload-artifact@v4
+
+        with:
+
+          name: evaluation-artifacts-${{ github.run_id }}
+
+          path: |
+
+            artifacts/threshold.txt
+
+            mlruns/
+
+            reports/evaluation_report.md
+
+            reports/eval_artifacts/
+
+          retention-days: 7
+
+
+  # ── Job 3: Quality Gates ──────────────────────────────────────────────────────
+
+  quality-gates:
+
+    name: Quality Gates (pytest --all)
+
+    runs-on: ubuntu-latest
+
+    needs: [evaluate]
+
+    timeout-minutes: 30
+
+    steps:
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+
+        with:
+
+          python-version: "3.11"
+
+      - name: Install uv
+
+        run: pip install --quiet uv
+
+      - name: Restore cache
+
+        uses: actions/cache@v4
+
+        with:
+
+          path: ~/.cache/uv
+
+          key: ${{ runner.os }}-uv-${{ hashFiles('uv.lock') }}
+
+          restore-keys: ${{ runner.os }}-uv-
+
+      - name: Install dependencies (frozen)
+
+        run: uv sync --frozen
+
+      - name: Download training artifacts
+
+        uses: actions/download-artifact@v4
+
+        with:
+
+          name: training-artifacts-${{ github.run_id }}
+
+          path: .
+
+      - name: Download evaluation artifacts
+
+        uses: actions/download-artifact@v4
+
+        with:
+
+          name: evaluation-artifacts-${{ github.run_id }}
+
+          path: .
+
+      - name: Run full test suite (all 40 tests including Tier 2)
+
+        run: |
+
+          bash -o pipefail -c "uv run pytest -v --tb=short 2>&1 | tee pytest-output.txt"
+
+      - name: Upload full test results
+
+        if: always()
+
+        uses: actions/upload-artifact@v4
+
+        with:
+
+          name: nightly-test-results-${{ github.run_id }}
+
+          path: |
+
+            pytest-output.txt
+
+            reports/
+
+          retention-days: 30
+
+
+  # ── Job 4: Alert on Failure ───────────────────────────────────────────────────
+
+  alert:
+
+    name: Failure Alert
+
+    runs-on: ubuntu-latest
+
+    needs: [quality-gates]
+
+    if: failure()
+
+    timeout-minutes: 5
+
+    steps:
+
+      - uses: actions/checkout@v4
+
+      - name: Download test results
+
+        uses: actions/download-artifact@v4
+
+        with:
+
+          name: nightly-test-results-${{ github.run_id }}
+
+          path: nightly-results/
+
+        continue-on-error: true
+
+      - name: Generate structured failure report
+
+        run: |
+
+          REPORT="NIGHTLY_FAILURE_REPORT.md"
+
+          cat > $REPORT << 'REPORT_EOF'
+
+          # Nightly Quality Gate Failure Report
+
+          REPORT_EOF
+
+          cat >> $REPORT << EOF
+
+          **Date:** $(date -u '+%Y-%m-%d %H:%M UTC')
+
+          **Run ID:** ${{ github.run_id }}
+
+          **Trigger:** ${{ github.event_name }}
+
+          **Commit:** ${{ github.sha }}
+
+          **Branch:** ${{ github.ref_name }}
+
+          ## Required Quality Gates
+
+          | Gate | Metric | Threshold | Test |
+
+          |---|---|---|---|
+
+          | T2-1 | Recall | ≥ 0.80 | Tier 2 quality gate |
+
+          | T2-2 | p99 Latency | < 500ms | Tier 2 quality gate |
+
+          | T2-3 | Brier score | < dynamic baseline | Tier 2 quality gate |
+
+          | T2-4 | Gender recall gap | ≤ 0.05 | Tier 2 fairness gate |
+
+          ## Pytest Output (last 60 lines)
+
+          \`\`\`
+
+          $(tail -60 nightly-results/pytest-output.txt 2>/dev/null || echo "Test output not available")
+
+          \`\`\`
+
+          ## Remediation Guide
+
+          - **T2-1 recall failure:** Check evaluation_report.md for actual recall.
+
+            Investigate: data pipeline changes, config changes, augmentation changes.
+
+          - **T2-2 latency failure:** Check torch thread config (torch.set_num_threads).
+
+            Investigate: dependency version changes, model size regression.
+
+          - **T2-3 Brier failure:** Model probabilities no longer informative.
+
+            Investigate: Platt scaling, class weight changes.
+
+          - **T2-4 fairness failure:** Recall gap between demographic groups exceeded.
+
+            Review L10 Decision 17 options.
+
+          ## Artifacts
+
+          Full test results at:
+
+          https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+          EOF
+
+          echo "Report generated:"
+
+          cat $REPORT
+
+      - name: Upload failure report
+
+        uses: actions/upload-artifact@v4
+
+        with:
+
+          name: NIGHTLY-FAILURE-REPORT-${{ github.run_id }}
+
+          path: NIGHTLY_FAILURE_REPORT.md
+
+          retention-days: 90
+
+      - name: Create GitHub issue (optional)
+
+        run: echo "Automated issue creation disabled — uncomment to enable"

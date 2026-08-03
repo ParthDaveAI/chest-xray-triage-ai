@@ -67,3 +67,22 @@ Thumbs.db
 .pytest_cache/.idea/
 artifacts/*.pt
 artifacts/*.parquet
+
+# Model weights — tracked by DVC
+artifacts/best_model.pt
+artifacts/best_phase1.pt
+artifacts/*.parquet
+
+# Generated reports
+reports/eval_artifacts/
+reports/gradcam/
+
+# Nightly failure reports
+NIGHTLY_FAILURE_REPORT.md
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.venv/
