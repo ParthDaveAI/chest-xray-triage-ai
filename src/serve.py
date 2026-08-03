@@ -417,17 +417,7 @@ def predict_image(
     request_id = str(uuid.uuid4())[:8]
     t_start    = time.time()
 
-    # ── Degraded mode check ───────────────────────────────────────────────────
-    comps = get_serving_components()
-    if comps is None:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Model serving unavailable. Reason: {_degraded_reason}",
-        )
-
-    model, transform, threshold, config, model_hash, _ = comps
-
-    # ── File size check BEFORE reading — OOM prevention ──────────────────────
+    # ── 1. File size check BEFORE reading — OOM prevention ──────────────────────
     # file.size from Content-Length header. Check first, read after.
     # A 2GB upload would exhaust container RAM if read before checking.
     # Note: Content-Length can be absent or spoofed; post-read check is fallback.
@@ -448,10 +438,22 @@ def predict_image(
             detail=f"File size ({len(image_bytes) // (1024*1024)}MB) exceeds 10MB limit.",
         )
 
-    # ── validate_image: 7-step quality gate ───────────────────────────────────
-    image_pil    = validate_image(image_bytes)
+    # ── 2. validate_image BEFORE degraded check ──────────────────────────────────
+    # Malformed inputs always return 422 regardless of server state.
+    # Clients must distinguish "my upload is invalid" from "server is broken".
+    image_pil = validate_image(image_bytes)
 
-    # ── Inference ─────────────────────────────────────────────────────────────
+    # ── 3. Degraded mode check AFTER validation ───────────────────────────────────
+    comps = get_serving_components()
+    if comps is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Model serving unavailable. Reason: {_degraded_reason}",
+        )
+
+    model, transform, threshold, config, model_hash, _ = comps
+
+    # ── Inference ──────────────────────────────────────────────────────────────────
     # transform = get_inference_transform() from dataset.py
     # Same function as evaluate.py — training/serving skew structurally prevented
     input_tensor = transform(image_pil).unsqueeze(0)   # (1, 3, 224, 224)

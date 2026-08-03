@@ -134,4 +134,24 @@ warn_return_any = false
 
 testpaths = ["tests"]
 
+addopts   = "-v --tb=short"
+
 asyncio_mode = "auto"
+
+markers   = [
+
+    "unit:  unit tests — no model artifacts required",
+
+    "tier1: integration tests — no model artifacts required",
+
+    "tier2: quality gate tests — requires artifacts/best_model.pt (nightly only)",
+
+]
+
+filterwarnings = [
+
+    "ignore::DeprecationWarning",
+
+    "ignore::UserWarning:torch",
+
+]
