@@ -54,14 +54,27 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import NamedTuple, Optional
 
+import numpy as np
 import torch
 import yaml
 from fastapi import FastAPI, File, HTTPException, UploadFile, status
+from fastapi.responses import Response as FastAPIResponse
 from PIL import Image, ImageStat
+from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 from pydantic import BaseModel, ConfigDict, Field
 
 from src.dataset import get_inference_transform
 from src.model import ChestXRayClassifier
+from src.monitor import (
+    INFERENCE_COUNTER,
+    INFERENCE_TIER_COUNTER,
+    VALIDATION_FAILURE_COUNTER,
+    INFERENCE_LATENCY,
+    EMBEDDING_LATENCY,
+    MODEL_LOADED_GAUGE,
+    DEGRADED_MODE_GAUGE,
+    EMBEDDING_REQUEST_COUNTER,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +98,10 @@ CONF_MOD  = 0.65
 
 # Accepted MIME types (magic-byte validation in validate_image)
 ACCEPTED_CONTENT_TYPES = {"image/png", "image/jpeg", "image/jpg"}
+
+# Internal service header for /embeddings endpoint
+INTERNAL_SERVICE_HEADER = "X-Internal-Service"
+INTERNAL_SERVICE_VALUE  = "p4-monitoring"
 
 # PIL decompression bomb protection — set before any Image.open() calls
 Image.MAX_IMAGE_PIXELS = MAX_IMAGE_PIXELS
@@ -129,6 +146,27 @@ class ErrorResponse(BaseModel):
     detail:     str
     error_code: str
     request_id: str = Field(default_factory=lambda: str(uuid.uuid4())[:8])
+
+
+class EmbeddingResponse(BaseModel):
+    """
+    Embedding endpoint response with Pydantic-enforced dimensionality.
+
+    Field(min_length=1280, max_length=1280) guarantees exactly 1280 values —
+    not just documentation, but enforced at serialisation time.
+    """
+    model_config = ConfigDict(strict=True)
+
+    embedding:     list[float] = Field(
+        ...,
+        min_length   = 1280,
+        max_length   = 1280,
+        description  = "1280-dim EfficientNet-B0 avgpool embedding",
+    )
+    embedding_dim: int   = Field(1280)
+    model_hash:    str   = Field(...)
+    inference_ms:  float = Field(...)
+    request_id:    str   = Field(default_factory=lambda: str(uuid.uuid4())[:8])
 
 
 # ── Serving Components Singleton ───────────────────────────────────────────────
@@ -335,8 +373,12 @@ def validate_image(image_bytes: bytes) -> Image.Image:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
-    Startup: configure threads, load components, run warmup inference.
+    Startup: configure threads, load components, warmup inference.
     Shutdown: log graceful shutdown.
+
+    L14 ADDITIONS:
+      - Prometheus gauge initialisation (model_loaded, degraded_mode)
+      - Pre-initialise all label combinations to 0 for Grafana dashboards
     """
     # CPU thread count: 1 minimises latency for single-image inference
     # Thread spawn overhead + lock contention exceeds parallelism benefit for batch=1
@@ -354,8 +396,26 @@ async def lifespan(app: FastAPI):
         with torch.no_grad():
             _ = components.model(dummy)
         logger.info("Warmup complete. API ready.")
+        MODEL_LOADED_GAUGE.set(1)
+        DEGRADED_MODE_GAUGE.set(0)
     else:
         logger.error("Startup failed — API is in degraded mode.")
+        MODEL_LOADED_GAUGE.set(0)
+        DEGRADED_MODE_GAUGE.set(1)
+
+    # Pre-initialise all known label combinations to 0.
+    # Without this, Prometheus time series don't exist until first increment.
+    # Grafana dashboards show "No Data" on rate() queries until first event.
+    for pred in ["Normal", "Suspicious"]:
+        INFERENCE_COUNTER.labels(prediction=pred).inc(0)
+
+    for tier in ["Tier1", "Tier2", "Tier3", "Normal"]:
+        INFERENCE_TIER_COUNTER.labels(tier=tier).inc(0)
+
+    for ft in ["invalid_format", "too_small", "blank", "too_large", "corrupted", "size_limit"]:
+        VALIDATION_FAILURE_COUNTER.labels(failure_type=ft).inc(0)
+
+    logger.info("Prometheus labels pre-initialised.")
 
     yield
     logger.info("API shutting down.")
@@ -415,7 +475,7 @@ def predict_image(
       413: file too large
     """
     request_id = str(uuid.uuid4())[:8]
-    t_start    = time.time()
+    t_start    = time.perf_counter()   # monotonic — safe for Prometheus histograms
 
     # ── 1. File size check BEFORE reading — OOM prevention ──────────────────────
     # file.size from Content-Length header. Check first, read after.
@@ -423,6 +483,7 @@ def predict_image(
     # Note: Content-Length can be absent or spoofed; post-read check is fallback.
 
     if file.size and file.size > MAX_BYTES:
+        VALIDATION_FAILURE_COUNTER.labels(failure_type="size_limit").inc()
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail=f"File size ({file.size // (1024*1024)}MB) exceeds 10MB limit.",
@@ -433,6 +494,7 @@ def predict_image(
 
     # Post-read size guard (handles absent/spoofed Content-Length)
     if len(image_bytes) > MAX_BYTES:
+        VALIDATION_FAILURE_COUNTER.labels(failure_type="size_limit").inc()
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail=f"File size ({len(image_bytes) // (1024*1024)}MB) exceeds 10MB limit.",
@@ -441,7 +503,22 @@ def predict_image(
     # ── 2. validate_image BEFORE degraded check ──────────────────────────────────
     # Malformed inputs always return 422 regardless of server state.
     # Clients must distinguish "my upload is invalid" from "server is broken".
-    image_pil = validate_image(image_bytes)
+    try:
+        image_pil = validate_image(image_bytes)
+    except HTTPException as e:
+        detail = str(e.detail).lower()
+        if "format" in detail or "magic" in detail:
+            ft = "invalid_format"
+        elif "small" in detail or "minimum" in detail:
+            ft = "too_small"
+        elif "blank" in detail or "variance" in detail:
+            ft = "blank"
+        elif "large" in detail or "dimension" in detail or "exceed" in detail:
+            ft = "too_large"
+        else:
+            ft = "corrupted"
+        VALIDATION_FAILURE_COUNTER.labels(failure_type=ft).inc()
+        raise
 
     # ── 3. Degraded mode check AFTER validation ───────────────────────────────────
     comps = get_serving_components()
@@ -491,7 +568,12 @@ def predict_image(
     # requires_human_review: operational expression of model card Tier3 constraint
     requires_review = (conf_level == "Low") or (triage_tier == "Tier3")
 
-    inference_ms = (time.time() - t_start) * 1000
+    inference_ms = (time.perf_counter() - t_start) * 1000
+
+    # ── Prometheus observations ────────────────────────────────────────────────────
+    INFERENCE_COUNTER.labels(prediction=prediction_str).inc()
+    INFERENCE_TIER_COUNTER.labels(tier=triage_tier).inc()
+    INFERENCE_LATENCY.observe(inference_ms / 1000.0)  # histogram in seconds
 
     # PHI-safe log: no image content, no filename
     logger.info(
@@ -513,4 +595,153 @@ def predict_image(
         model_hash            = model_hash,
         inference_ms          = round(inference_ms, 1),
         request_id            = request_id,
+    )
+
+
+@app.get("/metrics")
+def metrics():
+    """
+    Prometheus metrics in exposition format (text/plain).
+
+    Scrape interval: 15–30s is typical for ML serving.
+
+    NOT authenticated — assume network perimeter security (VPC/firewall).
+    Never expose this endpoint on a public load balancer without firewall rules.
+
+    PromQL examples:
+      p99 latency: histogram_quantile(0.99, rate(p4_inference_latency_seconds_bucket[5m]))
+      prediction rate: rate(p4_inference_total[5m])
+      validation failures: rate(p4_validation_failures_total[5m])
+    """
+    return FastAPIResponse(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
+
+@app.post("/embeddings", response_model=EmbeddingResponse)
+def get_embedding(
+    file: UploadFile = File(
+        ...,
+        description="Frontal chest X-ray PNG or JPEG. Max 10MB.",
+    ),
+    x_internal_service: str = Header(
+        default=None,
+        alias="X-Internal-Service",
+    ),
+):
+    """
+    Extract 1280-dim penultimate-layer embedding for P5 drift monitoring.
+
+    INTERNAL ENDPOINT — NOT for clinical users.
+
+    SECURITY NOTE:
+    The X-Internal-Service header check is defence-in-depth, NOT real security.
+    HTTP headers are trivially forgeable. Real security requires:
+      - mTLS: service mesh (Istio/Linkerd) mutual certificate authentication
+      - VPC isolation: endpoint not routable from public internet
+      - Service mesh identity: Kubernetes RBAC on service accounts
+
+    In this deployment, the load balancer MUST strip X-Internal-Service from
+    all external requests so only internal services can supply it.
+
+    Do NOT deploy this endpoint on a public load balancer without verifying
+    header-stripping configuration.
+
+    THREAD SAFETY:
+    Uses model.get_penultimate_features() — a stateless method that runs
+    backbone.features → backbone.avgpool through standard forward operations.
+    No forward hooks are used. Hooks on a shared model singleton in a
+    multi-threaded server cause cross-request embedding contamination.
+
+    SAMPLING:
+    Do not call this endpoint for every inference request.
+    Recommended: 5–10% random sample or reservoir sampling.
+    Collecting all embeddings produces unsustainable storage and compute costs.
+
+    JSON FORMAT NOTE:
+    Returns 1280 floats as a JSON list. Production would use binary protocols
+    (protobuf, Arrow, gRPC) for efficiency at scale.
+
+    PHI SAFETY:
+    Embedding vectors encode image content. Never log them.
+    Only aggregate statistics (count, norm) are logged.
+    """
+    request_id = str(uuid.uuid4())[:8]
+    t_start    = time.perf_counter()
+
+    # ── Security boundary check ───────────────────────────────────────────────
+    if x_internal_service != INTERNAL_SERVICE_VALUE:
+        logger.warning(
+            "request_id=%s /embeddings: unauthorized — incorrect or missing "
+            "X-Internal-Service header", request_id,
+        )
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "This endpoint requires X-Internal-Service: p4-monitoring. "
+                "Internal monitoring use only."
+            ),
+        )
+
+    # ── Size + validation ─────────────────────────────────────────────────────
+    if file.size and file.size > MAX_BYTES:
+        raise HTTPException(413, detail="File exceeds 10MB limit.")
+
+    image_bytes = file.file.read()
+
+    if len(image_bytes) > MAX_BYTES:
+        raise HTTPException(413, detail="File exceeds 10MB limit.")
+
+    image_pil = validate_image(image_bytes)
+
+    # ── Degraded check ────────────────────────────────────────────────────────
+    comps = get_serving_components()
+    if comps is None:
+        raise HTTPException(503, detail=f"Model unavailable: {_degraded_reason}")
+
+    model, transform, _, _, model_hash, _ = comps
+
+    # ── Thread-safe embedding extraction ──────────────────────────────────────
+    # Uses model.get_penultimate_features() — NO hooks.
+    # Forward hooks on a shared singleton cause cross-thread contamination:
+    #   Thread A and Thread B both register hooks. When either runs a forward
+    #   pass, ALL hooks fire — embeddings from one request land in another.
+    # get_penultimate_features() is a pure functional operation:
+    #   same input → same output, regardless of concurrent calls.
+
+    input_tensor = transform(image_pil).unsqueeze(0)   # (1, 3, 224, 224)
+
+    with torch.no_grad():
+        embedding_tensor = model.get_penultimate_features(input_tensor)
+        embedding_arr = (
+            embedding_tensor.detach().squeeze().cpu().numpy().astype(np.float32)
+        )
+
+    # ── Validate finiteness ───────────────────────────────────────────────────
+    if not np.isfinite(embedding_arr).all():
+        nan_n = int(np.isnan(embedding_arr).sum())
+        inf_n = int(np.isinf(embedding_arr).sum())
+        logger.error(
+            "request_id=%s Non-finite embedding: nan=%d inf=%d",
+            request_id, nan_n, inf_n,
+        )
+        raise HTTPException(500, detail="Embedding contains non-finite values.")
+
+    inference_ms = (time.perf_counter() - t_start) * 1000
+
+    # ── PHI-safe logging (aggregate only, never the vector itself) ────────────
+    EMBEDDING_REQUEST_COUNTER.inc()
+    EMBEDDING_LATENCY.observe(inference_ms / 1000.0)
+
+    logger.info(
+        "request_id=%s embedding dim=%d norm=%.4f model_hash=%s ms=%.1f",
+        request_id, len(embedding_arr),
+        float(np.linalg.norm(embedding_arr)),
+        model_hash, inference_ms,
+    )
+
+    return EmbeddingResponse(
+        embedding     = embedding_arr.tolist(),
+        embedding_dim = len(embedding_arr),
+        model_hash    = model_hash,
+        inference_ms  = round(inference_ms, 1),
+        request_id    = request_id,
     )
