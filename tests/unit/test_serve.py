@@ -14,7 +14,6 @@ Tests (4):
 """
 
 import pytest
-
 from fastapi import HTTPException
 
 pytestmark = pytest.mark.unit
@@ -22,8 +21,9 @@ pytestmark = pytest.mark.unit
 
 def test_u33_validate_image_valid(synthetic_png_bytes):
     """U33: Valid PNG passes validate_image and returns RGB PIL Image."""
-    from src.serve import validate_image
     from PIL import Image
+
+    from src.serve import validate_image
 
     result = validate_image(synthetic_png_bytes)
 

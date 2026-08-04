@@ -36,7 +36,7 @@ import pandas as pd
 import torch
 import torch.nn as nn
 import yaml
-from torch import autocast                  # PyTorch 2.x API (not torch.cuda.amp.autocast)
+from torch import autocast  # PyTorch 2.x API (not torch.cuda.amp.autocast)
 from torch.cuda.amp import GradScaler
 from torch.optim import Adam
 from torch.optim.lr_scheduler import ReduceLROnPlateau
@@ -48,11 +48,12 @@ from src.model import ChestXRayClassifier
 logger = logging.getLogger(__name__)
 
 BEST_PHASE1_PATH = "artifacts/best_phase1.pt"
-BEST_MODEL_PATH  = "artifacts/best_model.pt"
-BEST_MODEL_TMP   = "artifacts/best_model_tmp.pt"
+BEST_MODEL_PATH = "artifacts/best_model.pt"
+BEST_MODEL_TMP = "artifacts/best_model_tmp.pt"
 
 
 # ─── Reproducibility ───────────────────────────────────────────────────────────
+
 
 def set_seeds(seed: int) -> None:
     """
@@ -70,19 +71,23 @@ def set_seeds(seed: int) -> None:
     np.random.seed(seed)
 
     torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark     = False
+    torch.backends.cudnn.benchmark = False
 
     logger.info("Seeds set: %d. cudnn.deterministic=True, cudnn.benchmark=False.", seed)
 
 
 # ─── Reproducibility Metadata ──────────────────────────────────────────────────
 
+
 def get_git_commit_hash() -> str:
     """Return current git commit hash (HEAD). Returns 'unknown' if unavailable."""
     try:
         result = subprocess.run(
             ["git", "rev-parse", "HEAD"],
-            capture_output=True, text=True, check=True, timeout=10,
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=10,
         )
         return result.stdout.strip()
     except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
@@ -120,6 +125,7 @@ def get_config_hash(config_path: str = "config/training_config.yaml") -> str:
 
 # ─── Class Weights ─────────────────────────────────────────────────────────────
 
+
 def compute_class_weights(train_df: pd.DataFrame, device: torch.device) -> torch.Tensor:
     """
     Compute inverse-frequency class weights for CrossEntropyLoss.
@@ -135,7 +141,7 @@ def compute_class_weights(train_df: pd.DataFrame, device: torch.device) -> torch
         torch.Tensor shape (2,) on device: [weight_Normal, weight_Suspicious]
     """
     counts = train_df["binary_label"].value_counts().sort_index()
-    total  = len(train_df)
+    total = len(train_df)
 
     weights = torch.tensor(
         [total / (2 * counts[0]), total / (2 * counts[1])],
@@ -144,13 +150,16 @@ def compute_class_weights(train_df: pd.DataFrame, device: torch.device) -> torch
 
     logger.info(
         "Class weights on %s: Normal=%.4f, Suspicious=%.4f",
-        device, weights[0].item(), weights[1].item(),
+        device,
+        weights[0].item(),
+        weights[1].item(),
     )
 
     return weights
 
 
 # ─── Atomic Checkpoint Saving ──────────────────────────────────────────────────
+
 
 def _save_checkpoint_atomic(model: nn.Module, dest_path: str) -> None:
     """
@@ -165,6 +174,7 @@ def _save_checkpoint_atomic(model: nn.Module, dest_path: str) -> None:
 
 
 # ─── Epoch Functions ───────────────────────────────────────────────────────────
+
 
 def train_epoch(
     model: ChestXRayClassifier,
@@ -215,8 +225,8 @@ def train_epoch(
     model.train()  # Activates BN override from L5 if backbone is frozen
 
     total_loss = 0.0
-    correct    = 0
-    total      = 0
+    correct = 0
+    total = 0
 
     for images, labels in loader:
         images = images.to(device, non_blocking=True)
@@ -227,7 +237,7 @@ def train_epoch(
         # Step 1: AMP forward pass
         with autocast(device_type=device.type, enabled=(use_amp and device.type == "cuda")):
             outputs = model(images)
-            loss    = criterion(outputs, labels)
+            loss = criterion(outputs, labels)
 
         # Step 2: NaN/Inf detection — fail fast, not silently
         if torch.isnan(loss) or torch.isinf(loss):
@@ -238,16 +248,16 @@ def train_epoch(
 
         # Steps 3-6: Scaled backward, unscale, clip, step, update
         scaler.scale(loss).backward()
-        scaler.unscale_(optimizer)                                # Step 3: unscale first
-        torch.nn.utils.clip_grad_norm_(                           # Step 4: clip on true magnitudes
+        scaler.unscale_(optimizer)  # Step 3: unscale first
+        torch.nn.utils.clip_grad_norm_(  # Step 4: clip on true magnitudes
             model.parameters(), max_norm=max_grad_norm
         )
-        scaler.step(optimizer)                                    # Step 5: update weights
-        scaler.update()                                           # Step 6: adjust scale
+        scaler.step(optimizer)  # Step 5: update weights
+        scaler.update()  # Step 6: adjust scale
 
         total_loss += loss.item()
-        correct    += (outputs.argmax(dim=1) == labels).sum().item()
-        total      += labels.size(0)
+        correct += (outputs.argmax(dim=1) == labels).sum().item()
+        total += labels.size(0)
 
     return total_loss / len(loader), correct / total if total > 0 else 0.0
 
@@ -275,25 +285,26 @@ def validate_epoch(
     """
     model.eval()
     total_loss = 0.0
-    correct    = 0
-    total      = 0
+    correct = 0
+    total = 0
 
     with torch.no_grad():
         for images, labels in loader:
-            images  = images.to(device, non_blocking=True)
-            labels  = labels.to(device, non_blocking=True)
+            images = images.to(device, non_blocking=True)
+            labels = labels.to(device, non_blocking=True)
 
             outputs = model(images)
-            loss    = criterion(outputs, labels)
+            loss = criterion(outputs, labels)
 
             total_loss += loss.item()
-            correct    += (outputs.argmax(dim=1) == labels).sum().item()
-            total      += labels.size(0)
+            correct += (outputs.argmax(dim=1) == labels).sum().item()
+            total += labels.size(0)
 
     return total_loss / len(loader), correct / total if total > 0 else 0.0
 
 
 # ─── Full Training Pipeline ────────────────────────────────────────────────────
+
 
 def train_pipeline(
     config_path: str,
@@ -321,8 +332,8 @@ def train_pipeline(
         mlflow_run_id is used by evaluate.py (L7) to log evaluation metrics
         to the same run.
     """
-    config  = yaml.safe_load(open(config_path))
-    device  = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    config = yaml.safe_load(open(config_path))
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     use_amp = config["training"].get("use_amp", True)
     patience_cfg = config["training"]["early_stopping_patience"]
 
@@ -331,66 +342,68 @@ def train_pipeline(
     set_seeds(config["training"]["random_seed"])
 
     # ── Collect four-hash reproducibility chain ───────────────────────────────
-    git_hash    = get_git_commit_hash()
-    dvc_hash    = get_dvc_data_hash()
-    split_hash  = get_split_manifest_hash()
+    git_hash = get_git_commit_hash()
+    dvc_hash = get_dvc_data_hash()
+    split_hash = get_split_manifest_hash()
     config_hash = get_config_hash(config_path)
 
     logger.info(
-        "Reproducibility chain:\n"
-        "  git:    %s\n  dvc:    %s\n  split:  %s\n  config: %s",
-        git_hash, dvc_hash, split_hash, config_hash,
+        "Reproducibility chain:\n  git:    %s\n  dvc:    %s\n  split:  %s\n  config: %s",
+        git_hash,
+        dvc_hash,
+        split_hash,
+        config_hash,
     )
 
     # ── Build DataLoaders and model ───────────────────────────────────────────
-    train_loader, val_loader, _ = create_dataloaders(
-        train_df, val_df, val_df, config
-    )
+    train_loader, val_loader, _ = create_dataloaders(train_df, val_df, val_df, config)
 
-    model         = ChestXRayClassifier(config).to(device)
+    model = ChestXRayClassifier(config).to(device)
     class_weights = compute_class_weights(train_df, device)
-    criterion     = nn.CrossEntropyLoss(weight=class_weights)
-    scaler        = GradScaler(enabled=(use_amp and device.type == "cuda"))
+    criterion = nn.CrossEntropyLoss(weight=class_weights)
+    scaler = GradScaler(enabled=(use_amp and device.type == "cuda"))
 
     Path("artifacts").mkdir(exist_ok=True)
 
-    experiment_name = config.get("experiment", {}).get(
-        "mlflow_experiment_name", "p4-radiology-ai"
-    )
+    experiment_name = config.get("experiment", {}).get("mlflow_experiment_name", "p4-radiology-ai")
     mlflow.set_experiment(experiment_name)
 
     with mlflow.start_run() as run:
         run_id = run.info.run_id
 
         # ── Log reproducibility chain + all config + architecture ─────────────
-        mlflow.log_params({
-            "git_commit_hash":     git_hash,
-            "dvc_data_hash":       dvc_hash,
-            "split_manifest_hash": split_hash,
-            "config_hash":         config_hash,
-        })
+        mlflow.log_params(
+            {
+                "git_commit_hash": git_hash,
+                "dvc_data_hash": dvc_hash,
+                "split_manifest_hash": split_hash,
+                "config_hash": config_hash,
+            }
+        )
 
-        mlflow.log_params({
-            "architecture":            config["model"]["architecture"],
-            "pretrained":              config["model"]["pretrained"],
-            "num_classes":             config["model"]["num_classes"],
-            "dropout":                 config["model"]["dropout"],
-            "phase1_epochs":           config["training"]["phase1_epochs"],
-            "phase2_epochs":           config["training"]["phase2_epochs"],
-            "phase1_lr":               config["training"]["phase1_lr"],
-            "phase2_lr":               config["training"]["phase2_lr"],
-            "batch_size":              config["training"]["batch_size"],
-            "weight_decay":            config["training"]["weight_decay"],
-            "early_stopping_patience": patience_cfg,
-            "random_seed":             config["training"]["random_seed"],
-            "use_amp":                 use_amp,
-            "class_weight_normal":     round(class_weights[0].item(), 4),
-            "class_weight_suspicious": round(class_weights[1].item(), 4),
-            "horizontal_flip":         config["augmentation"]["horizontal_flip"],
-            "vertical_flip":           config["augmentation"]["vertical_flip"],
-            "rotation_degrees":        config["augmentation"]["rotation_degrees"],
-            "device":                  str(device),
-        })
+        mlflow.log_params(
+            {
+                "architecture": config["model"]["architecture"],
+                "pretrained": config["model"]["pretrained"],
+                "num_classes": config["model"]["num_classes"],
+                "dropout": config["model"]["dropout"],
+                "phase1_epochs": config["training"]["phase1_epochs"],
+                "phase2_epochs": config["training"]["phase2_epochs"],
+                "phase1_lr": config["training"]["phase1_lr"],
+                "phase2_lr": config["training"]["phase2_lr"],
+                "batch_size": config["training"]["batch_size"],
+                "weight_decay": config["training"]["weight_decay"],
+                "early_stopping_patience": patience_cfg,
+                "random_seed": config["training"]["random_seed"],
+                "use_amp": use_amp,
+                "class_weight_normal": round(class_weights[0].item(), 4),
+                "class_weight_suspicious": round(class_weights[1].item(), 4),
+                "horizontal_flip": config["augmentation"]["horizontal_flip"],
+                "vertical_flip": config["augmentation"]["vertical_flip"],
+                "rotation_degrees": config["augmentation"]["rotation_degrees"],
+                "device": str(device),
+            }
+        )
 
         arch = model.get_architecture_summary()
         mlflow.log_params({f"arch_{k}": v for k, v in arch.items()})
@@ -406,10 +419,12 @@ def train_pipeline(
         model.freeze_backbone()
 
         p1_counts = model.count_parameters()
-        mlflow.log_params({
-            "phase1_trainable_params": p1_counts["trainable"],
-            "phase1_frozen_params":    p1_counts["frozen"],
-        })
+        mlflow.log_params(
+            {
+                "phase1_trainable_params": p1_counts["trainable"],
+                "phase1_frozen_params": p1_counts["frozen"],
+            }
+        )
 
         optimizer_p1 = Adam(
             filter(lambda p: p.requires_grad, model.parameters()),
@@ -417,7 +432,7 @@ def train_pipeline(
             weight_decay=config["training"]["weight_decay"],
         )
 
-        scheduler_p1    = ReduceLROnPlateau(optimizer_p1, mode="min", patience=3, factor=0.1)
+        scheduler_p1 = ReduceLROnPlateau(optimizer_p1, mode="min", patience=3, factor=0.1)
         best_val_loss_p1 = float("inf")
         patience_counter = 0
 
@@ -432,14 +447,22 @@ def train_pipeline(
 
             logger.info(
                 "P1 Epoch %d/%d — train_loss=%.4f val_loss=%.4f val_acc=%.4f lr=%.6f",
-                epoch + 1, config["training"]["phase1_epochs"],
-                train_loss, val_loss, val_acc, current_lr,
+                epoch + 1,
+                config["training"]["phase1_epochs"],
+                train_loss,
+                val_loss,
+                val_acc,
+                current_lr,
             )
 
             mlflow.log_metrics(
-                {"phase1_train_loss": train_loss, "phase1_val_loss": val_loss,
-                 "phase1_train_acc": train_acc,   "phase1_val_acc": val_acc,
-                 "phase1_lr": current_lr},
+                {
+                    "phase1_train_loss": train_loss,
+                    "phase1_val_loss": val_loss,
+                    "phase1_train_acc": train_acc,
+                    "phase1_val_acc": val_acc,
+                    "phase1_lr": current_lr,
+                },
                 step=epoch,
             )
 
@@ -464,9 +487,7 @@ def train_pipeline(
             "Reloading best Phase 1 weights (val_loss=%.4f) before Phase 2...",
             best_val_loss_p1,
         )
-        model.load_state_dict(
-            torch.load(BEST_PHASE1_PATH, map_location=device, weights_only=True)
-        )
+        model.load_state_dict(torch.load(BEST_PHASE1_PATH, map_location=device, weights_only=True))
 
         # ════════════════════════════════════════════════════════════════════
         # PHASE 2 — Full fine-tuning
@@ -479,9 +500,11 @@ def train_pipeline(
         model.unfreeze_backbone()
 
         p2_counts = model.count_parameters()
-        mlflow.log_params({
-            "phase2_trainable_params": p2_counts["trainable"],
-        })
+        mlflow.log_params(
+            {
+                "phase2_trainable_params": p2_counts["trainable"],
+            }
+        )
 
         # ── REGRESSION FIX: Establish global best before Phase 2 ─────────────
         # Copy best Phase 1 model as the baseline best_model.pt.
@@ -505,7 +528,7 @@ def train_pipeline(
             weight_decay=config["training"]["weight_decay"],
         )
 
-        scheduler_p2    = ReduceLROnPlateau(optimizer_p2, mode="min", patience=3, factor=0.1)
+        scheduler_p2 = ReduceLROnPlateau(optimizer_p2, mode="min", patience=3, factor=0.1)
         patience_counter = 0
 
         for epoch in range(config["training"]["phase2_epochs"]):
@@ -519,34 +542,41 @@ def train_pipeline(
 
             logger.info(
                 "P2 Epoch %d/%d — train_loss=%.4f val_loss=%.4f val_acc=%.4f lr=%.6f",
-                epoch + 1, config["training"]["phase2_epochs"],
-                train_loss, val_loss, val_acc, current_lr,
+                epoch + 1,
+                config["training"]["phase2_epochs"],
+                train_loss,
+                val_loss,
+                val_acc,
+                current_lr,
             )
 
             mlflow.log_metrics(
-                {"phase2_train_loss": train_loss, "phase2_val_loss": val_loss,
-                 "phase2_train_acc": train_acc,   "phase2_val_acc": val_acc,
-                 "phase2_lr": current_lr},
+                {
+                    "phase2_train_loss": train_loss,
+                    "phase2_val_loss": val_loss,
+                    "phase2_train_acc": train_acc,
+                    "phase2_val_acc": val_acc,
+                    "phase2_lr": current_lr,
+                },
                 step=epoch,
             )
 
             if val_loss < global_best_val_loss:
                 global_best_val_loss = val_loss
-                patience_counter     = 0
+                patience_counter = 0
                 _save_checkpoint_atomic(model, BEST_MODEL_PATH)
                 mlflow.log_artifact(BEST_MODEL_PATH)
-                logger.info(
-                    "P2 new GLOBAL best val_loss=%.4f → saved best_model.pt", val_loss
-                )
+                logger.info("P2 new GLOBAL best val_loss=%.4f → saved best_model.pt", val_loss)
             else:
                 patience_counter += 1
                 if patience_counter >= patience_cfg:
                     logger.info("Phase 2 early stopping at epoch %d", epoch + 1)
                     break
 
-        mlflow.log_metric("best_phase2_val_loss",
-                          global_best_val_loss if global_best_val_loss < best_val_loss_p1
-                          else best_val_loss_p1)
+        mlflow.log_metric(
+            "best_phase2_val_loss",
+            global_best_val_loss if global_best_val_loss < best_val_loss_p1 else best_val_loss_p1,
+        )
         mlflow.log_metric("best_overall_val_loss", global_best_val_loss)
 
         # ── Restore best model before returning ───────────────────────────────
@@ -557,9 +587,7 @@ def train_pipeline(
             "Restoring globally best model (val_loss=%.4f) from best_model.pt...",
             global_best_val_loss,
         )
-        model.load_state_dict(
-            torch.load(BEST_MODEL_PATH, map_location=device, weights_only=True)
-        )
+        model.load_state_dict(torch.load(BEST_MODEL_PATH, map_location=device, weights_only=True))
 
         logger.info(
             "Training complete.\n"

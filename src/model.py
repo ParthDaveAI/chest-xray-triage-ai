@@ -75,9 +75,9 @@ class ChestXRayClassifier(nn.Module):
         super().__init__()
 
         self.config = config
-        num_classes  = config["model"]["num_classes"]   # 2
-        dropout_rate = config["model"]["dropout"]       # 0.3
-        pretrained   = config["model"]["pretrained"]    # True
+        num_classes = config["model"]["num_classes"]  # 2
+        dropout_rate = config["model"]["dropout"]  # 0.3
+        pretrained = config["model"]["pretrained"]  # True
 
         # ── Load pretrained backbone ───────────────────────────────────────────
         if pretrained:
@@ -128,8 +128,11 @@ class ChestXRayClassifier(nn.Module):
             "  Embedding dim: %d\n"
             "  Head:          Dropout(%.1f) + Linear(%d, %d) [Xavier init]\n"
             "  Total params:  %s",
-            pretrained, self.embedding_dim,
-            dropout_rate, in_features, num_classes,
+            pretrained,
+            self.embedding_dim,
+            dropout_rate,
+            in_features,
+            num_classes,
             f"{counts['total']:,}",
         )
 
@@ -211,14 +214,17 @@ class ChestXRayClassifier(nn.Module):
         counts = self.count_parameters()
 
         # Verify: trainable should equal head parameters only
-        expected_head_params = self.embedding_dim * self.config["model"]["num_classes"] + \
-                               self.config["model"]["num_classes"]
+        expected_head_params = (
+            self.embedding_dim * self.config["model"]["num_classes"]
+            + self.config["model"]["num_classes"]
+        )
 
         if counts["trainable"] != expected_head_params:
             logger.warning(
                 "After freeze_backbone(), trainable params = %d but expected %d (head only). "
                 "Investigate if backbone has additional trainable components.",
-                counts["trainable"], expected_head_params,
+                counts["trainable"],
+                expected_head_params,
             )
 
         logger.info(
@@ -226,7 +232,8 @@ class ChestXRayClassifier(nn.Module):
             "  Frozen params:    %s\n"
             "  Trainable params: %s (head only)\n"
             "  BatchNorm: will be kept in eval mode via train() override",
-            f"{counts['frozen']:,}", f"{counts['trainable']:,}",
+            f"{counts['frozen']:,}",
+            f"{counts['trainable']:,}",
         )
 
     def unfreeze_backbone(self) -> None:
@@ -297,9 +304,9 @@ class ChestXRayClassifier(nn.Module):
         Returns:
             embedding (batch_size, 1280) float32 — not normalised
         """
-        features = self.backbone.features(x)      # (B, 1280, 7, 7)
-        pooled   = self.backbone.avgpool(features) # (B, 1280, 1, 1)
-        return torch.flatten(pooled, 1)            # (B, 1280)
+        features = self.backbone.features(x)  # (B, 1280, 7, 7)
+        pooled = self.backbone.avgpool(features)  # (B, 1280, 1, 1)
+        return torch.flatten(pooled, 1)  # (B, 1280)
 
     # ── Forward Pass ───────────────────────────────────────────────────────────
 
@@ -346,9 +353,9 @@ class ChestXRayClassifier(nn.Module):
         Returns:
             dict: {total, trainable, frozen}
         """
-        total     = sum(p.numel() for p in self.parameters())
+        total = sum(p.numel() for p in self.parameters())
         trainable = sum(p.numel() for p in self.parameters() if p.requires_grad)
-        frozen    = total - trainable
+        frozen = total - trainable
 
         return {"total": total, "trainable": trainable, "frozen": frozen}
 
@@ -362,12 +369,12 @@ class ChestXRayClassifier(nn.Module):
         counts = self.count_parameters()
 
         return {
-            "architecture":     self.config["model"]["architecture"],
-            "pretrained":       self.config["model"]["pretrained"],
-            "num_classes":      self.config["model"]["num_classes"],
-            "dropout":          self.config["model"]["dropout"],
-            "embedding_dim":    self.embedding_dim,
-            "total_params":     counts["total"],
+            "architecture": self.config["model"]["architecture"],
+            "pretrained": self.config["model"]["pretrained"],
+            "num_classes": self.config["model"]["num_classes"],
+            "dropout": self.config["model"]["dropout"],
+            "embedding_dim": self.embedding_dim,
+            "total_params": counts["total"],
             "trainable_params": counts["trainable"],
-            "frozen_params":    counts["frozen"],
+            "frozen_params": counts["frozen"],
         }

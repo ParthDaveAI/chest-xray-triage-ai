@@ -59,17 +59,18 @@ matplotlib.use("Agg")
 
 logger = logging.getLogger(__name__)
 
-GRADCAM_DIR     = Path("reports/gradcam")
+GRADCAM_DIR = Path("reports/gradcam")
 GRADCAM_SUMMARY = GRADCAM_DIR / "summary.md"
-THRESHOLD_PATH  = "artifacts/threshold.txt"
+THRESHOLD_PATH = "artifacts/threshold.txt"
 
 
 # ─── Target Layer Verification ────────────────────────────────────────────────
 
+
 def verify_target_layer(
     model,
-    device:  torch.device,
-    config:  dict,
+    device: torch.device,
+    config: dict,
 ) -> bool:
     """
     Verify that backbone.features[-1] produces non-zero gradients.
@@ -87,12 +88,10 @@ def verify_target_layer(
     even if model weights are frozen for inference optimisation.
     """
     target_layer = model.backbone.features[-1]
-    transform    = get_inference_transform(config)
-    img_size     = config["data"]["image_size"]
+    transform = get_inference_transform(config)
+    img_size = config["data"]["image_size"]
 
-    dummy_pil    = Image.fromarray(
-        np.random.randint(50, 200, (img_size, img_size, 3), dtype=np.uint8)
-    )
+    dummy_pil = Image.fromarray(np.random.randint(50, 200, (img_size, img_size, 3), dtype=np.uint8))
     input_tensor = transform(dummy_pil).unsqueeze(0).to(device)
 
     # Must set requires_grad_(True) — see module docstring
@@ -111,14 +110,13 @@ def verify_target_layer(
 
     try:
         output = model(input_tensor)
-        score  = output[0, 1]
+        score = output[0, 1]
         model.zero_grad()
         score.backward()
 
         if captured["activations"] is None:
             raise RuntimeError(
-                f"Target layer forward hook did not fire. "
-                f"Layer: {target_layer.__class__.__name__}"
+                f"Target layer forward hook did not fire. Layer: {target_layer.__class__.__name__}"
             )
 
         if captured["activations"].abs().max() < 1e-8:
@@ -133,13 +131,13 @@ def verify_target_layer(
             )
 
         feat_shape = tuple(captured["activations"].shape)
-        grad_max   = float(captured["gradients"].abs().max())
+        grad_max = float(captured["gradients"].abs().max())
 
         logger.info(
-            "Target layer verified: %s\n"
-            "  Feature map shape: %s\n"
-            "  Max gradient: %.6f (> 0 ✓)",
-            target_layer.__class__.__name__, feat_shape, grad_max,
+            "Target layer verified: %s\n  Feature map shape: %s\n  Max gradient: %.6f (> 0 ✓)",
+            target_layer.__class__.__name__,
+            feat_shape,
+            grad_max,
         )
 
         return True
@@ -151,12 +149,13 @@ def verify_target_layer(
 
 # ─── Grad-CAM Computation ─────────────────────────────────────────────────────
 
+
 def compute_gradcam(
-    model:        nn.Module,
+    model: nn.Module,
     image_tensor: torch.Tensor,
     target_layer: nn.Module,
     target_class: int,
-    device:       torch.device,
+    device: torch.device,
 ) -> np.ndarray:
     """
     Compute Grad-CAM heatmap for a single image.
@@ -231,26 +230,25 @@ def compute_gradcam(
         # Do NOT wrap in torch.no_grad() — gradients are required for Grad-CAM
         image_tensor = image_tensor.requires_grad_(True)
 
-        output       = model(image_tensor)
-        score        = output[0, target_class]
+        output = model(image_tensor)
+        score = output[0, target_class]
         model.zero_grad()
         score.backward()
 
-        activations = captured["activations"]   # (1, K, H_feat, W_feat)
-        gradients   = captured["gradients"]     # (1, K, H_feat, W_feat)
+        activations = captured["activations"]  # (1, K, H_feat, W_feat)
+        gradients = captured["gradients"]  # (1, K, H_feat, W_feat)
 
         if activations is None or gradients is None:
             logger.warning("Hooks did not capture — returning blank heatmap.")
-            return np.zeros((image_tensor.shape[2], image_tensor.shape[3]),
-                            dtype=np.float32)
+            return np.zeros((image_tensor.shape[2], image_tensor.shape[3]), dtype=np.float32)
 
         # Step 1: importance weights = global average of gradients per feature map
-        weights = gradients.squeeze(0).mean(dim=(1, 2))    # (K,)
+        weights = gradients.squeeze(0).mean(dim=(1, 2))  # (K,)
 
         # Step 2: weighted sum of feature maps + ReLU
-        feat    = activations.squeeze(0)                   # (K, H_feat, W_feat)
-        cam     = (weights[:, None, None] * feat).sum(dim=0)   # (H_feat, W_feat)
-        cam     = torch.clamp(cam, min=0.0)                # ReLU
+        feat = activations.squeeze(0)  # (K, H_feat, W_feat)
+        cam = (weights[:, None, None] * feat).sum(dim=0)  # (H_feat, W_feat)
+        cam = torch.clamp(cam, min=0.0)  # ReLU
 
         # Step 3: normalise to [0, 1]
         cam_min, cam_max = cam.min(), cam.max()
@@ -265,12 +263,17 @@ def compute_gradcam(
         h_out = image_tensor.shape[2]
         w_out = image_tensor.shape[3]
 
-        cam_up = torch.nn.functional.interpolate(
-            cam_norm.unsqueeze(0).unsqueeze(0),
-            size=(h_out, w_out),
-            mode="bilinear",
-            align_corners=False,
-        ).squeeze().cpu().numpy()
+        cam_up = (
+            torch.nn.functional.interpolate(
+                cam_norm.unsqueeze(0).unsqueeze(0),
+                size=(h_out, w_out),
+                mode="bilinear",
+                align_corners=False,
+            )
+            .squeeze()
+            .cpu()
+            .numpy()
+        )
 
         return cam_up.astype(np.float32)
 
@@ -283,10 +286,11 @@ def compute_gradcam(
 
 # ─── Heatmap Overlay ──────────────────────────────────────────────────────────
 
+
 def overlay_heatmap(
     original_pil: Image.Image,
-    heatmap:      np.ndarray,
-    alpha:        float = 0.5,
+    heatmap: np.ndarray,
+    alpha: float = 0.5,
 ) -> Image.Image:
     """
     Create a side-by-side image: original X-ray | heatmap overlay.
@@ -323,38 +327,38 @@ def overlay_heatmap(
         PIL Image (448, 224) — side-by-side: original | overlay
     """
     original_rgb = original_pil.convert("RGB").resize((224, 224))
-    orig_arr     = np.array(original_rgb, dtype=np.float32) / 255.0
+    orig_arr = np.array(original_rgb, dtype=np.float32) / 255.0
 
     # Apply INFERNO colormap
-    cmap         = plt.cm.inferno
-    heatmap_rgb  = cmap(heatmap)[:, :, :3]   # (H, W, 3), drop alpha
+    cmap = plt.cm.inferno
+    heatmap_rgb = cmap(heatmap)[:, :, :3]  # (H, W, 3), drop alpha
 
     # Heatmap-as-mask: per-pixel blend weight
-    heatmap_mask = heatmap[..., None]         # (H, W, 1) broadcast to (H, W, 3)
-    blended      = orig_arr * (1.0 - alpha * heatmap_mask) + \
-                   heatmap_rgb * (alpha * heatmap_mask)
+    heatmap_mask = heatmap[..., None]  # (H, W, 1) broadcast to (H, W, 3)
+    blended = orig_arr * (1.0 - alpha * heatmap_mask) + heatmap_rgb * (alpha * heatmap_mask)
 
-    blended      = np.clip(blended, 0.0, 1.0)
-    blended_pil  = Image.fromarray((blended * 255).astype(np.uint8))
+    blended = np.clip(blended, 0.0, 1.0)
+    blended_pil = Image.fromarray((blended * 255).astype(np.uint8))
 
     # Side-by-side composite
     composite = Image.new("RGB", (448, 224))
     composite.paste(original_rgb, (0, 0))
-    composite.paste(blended_pil,  (224, 0))
+    composite.paste(blended_pil, (224, 0))
 
     return composite
 
 
 # ─── Batch Heatmap Generation ─────────────────────────────────────────────────
 
+
 def generate_case_heatmaps(
-    model:        nn.Module,
-    cases_df:     pd.DataFrame,
-    label:        str,
-    config:       dict,
-    device:       torch.device,
-    n_cases:      int,
-    output_dir:   Path,
+    model: nn.Module,
+    cases_df: pd.DataFrame,
+    label: str,
+    config: dict,
+    device: torch.device,
+    n_cases: int,
+    output_dir: Path,
     target_class: int = 1,
 ) -> list[str]:
     """
@@ -384,11 +388,10 @@ def generate_case_heatmaps(
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    transform    = get_inference_transform(config)
+    transform = get_inference_transform(config)
     target_layer = model.backbone.features[-1]
 
-    sort_col     = "model_confidence" if "model_confidence" in cases_df.columns \
-                   else "probability"
+    sort_col = "model_confidence" if "model_confidence" in cases_df.columns else "probability"
 
     sorted_cases = cases_df.sort_values(sort_col, ascending=False).head(n_cases)
 
@@ -406,19 +409,17 @@ def generate_case_heatmaps(
             continue
 
         try:
-            heatmap = compute_gradcam(
-                model, input_tensor, target_layer, target_class, device
-            )
+            heatmap = compute_gradcam(model, input_tensor, target_layer, target_class, device)
         except Exception as e:
             logger.warning("Grad-CAM failed for %s: %s — skipping.", img_path, e)
             continue
 
         overlay = overlay_heatmap(original_pil, heatmap)
 
-        prob  = row.get("probability", 0.0)
-        conf  = row.get("model_confidence", 0.0)
+        prob = row.get("probability", 0.0)
+        conf = row.get("model_confidence", 0.0)
 
-        fname = f"{label}_{i+1:02d}_prob{prob:.3f}_conf{conf:.3f}.png"
+        fname = f"{label}_{i + 1:02d}_prob{prob:.3f}_conf{conf:.3f}.png"
         fpath = output_dir / fname
         overlay.save(str(fpath))
 
@@ -426,7 +427,10 @@ def generate_case_heatmaps(
 
     logger.info(
         "Generated %d/%d %s heatmaps → %s",
-        len(saved_paths), min(n_cases, len(cases_df)), label, output_dir,
+        len(saved_paths),
+        min(n_cases, len(cases_df)),
+        label,
+        output_dir,
     )
 
     return saved_paths
@@ -434,12 +438,13 @@ def generate_case_heatmaps(
 
 # ─── Full Explainability Pipeline ─────────────────────────────────────────────
 
+
 def run_explainability(
     config_path: str,
-    fn_df:       pd.DataFrame,
-    fp_df:       pd.DataFrame,
+    fn_df: pd.DataFrame,
+    fp_df: pd.DataFrame,
     all_test_df: pd.DataFrame,
-    run_id:      str,
+    run_id: str,
 ) -> dict:
     """
     Orchestrate Grad-CAM generation for all priority case types.
@@ -481,23 +486,47 @@ def run_explainability(
     results = {}
 
     fn_paths = generate_case_heatmaps(
-        model, fn_df, "FN", config, device,
-        n_cases=10, output_dir=GRADCAM_DIR / "fn_cases", target_class=1,
+        model,
+        fn_df,
+        "FN",
+        config,
+        device,
+        n_cases=10,
+        output_dir=GRADCAM_DIR / "fn_cases",
+        target_class=1,
     )
 
     fp_paths = generate_case_heatmaps(
-        model, fp_df, "FP", config, device,
-        n_cases=10, output_dir=GRADCAM_DIR / "fp_cases", target_class=1,
+        model,
+        fp_df,
+        "FP",
+        config,
+        device,
+        n_cases=10,
+        output_dir=GRADCAM_DIR / "fp_cases",
+        target_class=1,
     )
 
     tp_paths = generate_case_heatmaps(
-        model, tp_df, "TP", config, device,
-        n_cases=5, output_dir=GRADCAM_DIR / "tp_cases", target_class=1,
+        model,
+        tp_df,
+        "TP",
+        config,
+        device,
+        n_cases=5,
+        output_dir=GRADCAM_DIR / "tp_cases",
+        target_class=1,
     )
 
     tn_paths = generate_case_heatmaps(
-        model, tn_df, "TN", config, device,
-        n_cases=3, output_dir=GRADCAM_DIR / "tn_cases", target_class=0,
+        model,
+        tn_df,
+        "TN",
+        config,
+        device,
+        n_cases=3,
+        output_dir=GRADCAM_DIR / "tn_cases",
+        target_class=0,
     )
 
     results = {
@@ -510,32 +539,42 @@ def run_explainability(
     total = sum(len(v) for v in results.values())
 
     with mlflow.start_run(run_id=run_id):
-        mlflow.log_metrics({
-            "gradcam_fn_count": len(fn_paths),
-            "gradcam_fp_count": len(fp_paths),
-            "gradcam_tp_count": len(tp_paths),
-            "gradcam_tn_count": len(tn_paths),
-            "gradcam_total":    total,
-        })
+        mlflow.log_metrics(
+            {
+                "gradcam_fn_count": len(fn_paths),
+                "gradcam_fp_count": len(fp_paths),
+                "gradcam_tp_count": len(tp_paths),
+                "gradcam_tn_count": len(tn_paths),
+                "gradcam_total": total,
+            }
+        )
 
         if total > 0:
             mlflow.log_artifacts(str(GRADCAM_DIR), artifact_path="gradcam")
 
     _write_gradcam_summary(
-        fn_paths=fn_paths, fp_paths=fp_paths,
-        tp_paths=tp_paths, tn_paths=tn_paths,
-        fn_df=fn_df, fp_df=fp_df,
+        fn_paths=fn_paths,
+        fp_paths=fp_paths,
+        tp_paths=tp_paths,
+        tn_paths=tn_paths,
+        fn_df=fn_df,
+        fp_df=fp_df,
     )
 
     logger.info(
         "Explainability complete: %d heatmaps total (FN=%d FP=%d TP=%d TN=%d)",
-        total, len(fn_paths), len(fp_paths), len(tp_paths), len(tn_paths),
+        total,
+        len(fn_paths),
+        len(fp_paths),
+        len(tp_paths),
+        len(tn_paths),
     )
 
     return results
 
 
 # ─── Summary Writer ───────────────────────────────────────────────────────────
+
 
 def _write_gradcam_summary(fn_paths, fp_paths, tp_paths, tn_paths, fn_df, fp_df):
     """Write reports/gradcam/summary.md — the gate artifact for L9."""

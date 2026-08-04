@@ -68,24 +68,25 @@ import yaml
 
 logger = logging.getLogger(__name__)
 
-FAIRNESS_REPORT_PATH  = "reports/fairness_report.md"
-MODEL_CARD_PATH       = "reports/model_card.md"
-EDA_SUMMARY_PATH      = "reports/eda/eda_summary.json"
+FAIRNESS_REPORT_PATH = "reports/fairness_report.md"
+MODEL_CARD_PATH = "reports/model_card.md"
+EDA_SUMMARY_PATH = "reports/eda/eda_summary.json"
 
 # Fairness threshold: max acceptable recall gap (policy-defined, not scientific law)
-FAIRNESS_THRESHOLD    = 0.05    # 5pp — Decision 16
+FAIRNESS_THRESHOLD = 0.05  # 5pp — Decision 16
 
 # Minimum Suspicious cases for a reliable recall estimate
-MIN_N_SUSPICIOUS      = 50
+MIN_N_SUSPICIOUS = 50
 
 
 # ─── Subgroup Recall ──────────────────────────────────────────────────────────
 
+
 def compute_subgroup_recall(
-    all_df:       pd.DataFrame,
+    all_df: pd.DataFrame,
     subgroup_col: str,
-    n_bootstrap:  int = 1000,
-    seed:         int = 42,
+    n_bootstrap: int = 1000,
+    seed: int = 42,
 ) -> dict:
     """
     Compute recall and 95% bootstrap CI for each subgroup value.
@@ -106,24 +107,29 @@ def compute_subgroup_recall(
         logger.warning("Column '%s' not in DataFrame — skipping.", subgroup_col)
         return {}
 
-    rng     = np.random.default_rng(seed=seed)
+    rng = np.random.default_rng(seed=seed)
     results = {}
 
     for group_val in sorted(all_df[subgroup_col].dropna().unique()):
-        group_df   = all_df[all_df[subgroup_col] == group_val]
+        group_df = all_df[all_df[subgroup_col] == group_val]
         suspicious = group_df[group_df["binary_label"] == 1]
-        n_total    = len(group_df)
-        n_susp     = len(suspicious)
-        low_rel    = n_susp < MIN_N_SUSPICIOUS
+        n_total = len(group_df)
+        n_susp = len(suspicious)
+        low_rel = n_susp < MIN_N_SUSPICIOUS
 
         if n_susp == 0:
             logger.warning(
                 "Subgroup %s=%s: 0 Suspicious cases — recall undefined.",
-                subgroup_col, group_val,
+                subgroup_col,
+                group_val,
             )
             results[str(group_val)] = {
-                "recall": None, "ci_lower": None, "ci_upper": None,
-                "n_total": n_total, "n_suspicious": 0, "low_reliability": True,
+                "recall": None,
+                "ci_lower": None,
+                "ci_upper": None,
+                "n_total": n_total,
+                "n_suspicious": 0,
+                "low_reliability": True,
             }
             continue
 
@@ -132,7 +138,7 @@ def compute_subgroup_recall(
         # Bootstrap CI (within subgroup — for reporting only)
         boots = []
         for _ in range(n_bootstrap):
-            idx    = rng.choice(n_susp, n_susp, replace=True)
+            idx = rng.choice(n_susp, n_susp, replace=True)
             sample = suspicious.iloc[idx]
             boots.append(float((sample["predicted_label"] == 1).sum() / n_susp))
 
@@ -140,20 +146,25 @@ def compute_subgroup_recall(
         ci_hi = float(np.percentile(boots, 97.5))
 
         results[str(group_val)] = {
-            "recall":          round(recall, 4),
-            "ci_lower":        round(ci_lo,  4),
-            "ci_upper":        round(ci_hi,  4),
-            "n_total":         n_total,
-            "n_suspicious":    n_susp,
+            "recall": round(recall, 4),
+            "ci_lower": round(ci_lo, 4),
+            "ci_upper": round(ci_hi, 4),
+            "n_total": n_total,
+            "n_suspicious": n_susp,
             "low_reliability": low_rel,
         }
 
         rel_note = " ⚠️  LOW RELIABILITY (n_suspicious < 50)" if low_rel else ""
         logger.info(
-            "Equal Opportunity — %s=%s: recall=%.4f 95%%CI=[%.4f,%.4f] "
-            "(n_susp=%d, n_total=%d)%s",
-            subgroup_col, group_val, recall, ci_lo, ci_hi,
-            n_susp, n_total, rel_note,
+            "Equal Opportunity — %s=%s: recall=%.4f 95%%CI=[%.4f,%.4f] (n_susp=%d, n_total=%d)%s",
+            subgroup_col,
+            group_val,
+            recall,
+            ci_lo,
+            ci_hi,
+            n_susp,
+            n_total,
+            rel_note,
         )
 
     return results
@@ -161,13 +172,14 @@ def compute_subgroup_recall(
 
 # ─── Gap CI — Bootstrap the Gap Directly ─────────────────────────────────────
 
+
 def compute_gap_bootstrap_ci(
-    all_df:       pd.DataFrame,
+    all_df: pd.DataFrame,
     subgroup_col: str,
-    group_a:      str,
-    group_b:      str,
-    n_bootstrap:  int = 1000,
-    seed:         int = 42,
+    group_a: str,
+    group_b: str,
+    n_bootstrap: int = 1000,
+    seed: int = 42,
 ) -> tuple[float, float, float]:
     """
     Bootstrap the recall gap distribution directly between two subgroups.
@@ -195,16 +207,16 @@ def compute_gap_bootstrap_ci(
     Returns:
         (point_estimate, ci_lower, ci_upper)
     """
-    rng     = np.random.default_rng(seed=seed)
-    df_a    = all_df[(all_df[subgroup_col] == group_a) & (all_df["binary_label"] == 1)]
-    df_b    = all_df[(all_df[subgroup_col] == group_b) & (all_df["binary_label"] == 1)]
+    rng = np.random.default_rng(seed=seed)
+    df_a = all_df[(all_df[subgroup_col] == group_a) & (all_df["binary_label"] == 1)]
+    df_b = all_df[(all_df[subgroup_col] == group_b) & (all_df["binary_label"] == 1)]
 
     if len(df_a) == 0 or len(df_b) == 0:
         return float("nan"), float("nan"), float("nan")
 
     recall_a = float((df_a["predicted_label"] == 1).sum() / len(df_a))
     recall_b = float((df_b["predicted_label"] == 1).sum() / len(df_b))
-    point    = recall_a - recall_b
+    point = recall_a - recall_b
 
     gap_boots = []
     for _ in range(n_bootstrap):
@@ -224,11 +236,12 @@ def compute_gap_bootstrap_ci(
 
 # ─── Recall Gap Matrix ────────────────────────────────────────────────────────
 
+
 def compute_recall_gap_matrix(
     subgroup_recalls: dict,
-    all_df:           pd.DataFrame,
-    subgroup_col:     str,
-    n_bootstrap:      int = 1000,
+    all_df: pd.DataFrame,
+    subgroup_col: str,
+    n_bootstrap: int = 1000,
 ) -> dict:
     """
     Compute pairwise recall gaps with direct gap bootstrap CIs.
@@ -238,43 +251,46 @@ def compute_recall_gap_matrix(
     Gap significance: CI excludes zero → gap is statistically established.
     A gap > FAIRNESS_THRESHOLD (0.05) is flagged as a fairness concern.
     """
-    valid_groups = {
-        k: v for k, v in subgroup_recalls.items()
-        if v["recall"] is not None
-    }
+    valid_groups = {k: v for k, v in subgroup_recalls.items() if v["recall"] is not None}
     groups = list(valid_groups.keys())
-    gaps   = {}
+    gaps = {}
 
     for i in range(len(groups)):
         for j in range(i + 1, len(groups)):
-            a, b    = groups[i], groups[j]
+            a, b = groups[i], groups[j]
             gap_pt, gap_lo, gap_hi = compute_gap_bootstrap_ci(
                 all_df, subgroup_col, a, b, n_bootstrap=n_bootstrap
             )
 
-            abs_gap   = abs(gap_pt)
-            gap_sig   = (gap_lo > 0) or (gap_hi < 0)  # CI excludes zero
-            concern   = abs_gap > FAIRNESS_THRESHOLD
+            abs_gap = abs(gap_pt)
+            gap_sig = (gap_lo > 0) or (gap_hi < 0)  # CI excludes zero
+            concern = abs_gap > FAIRNESS_THRESHOLD
 
             key = f"{a}_vs_{b}"
             gaps[key] = {
-                "group_a":         a,
-                "group_b":         b,
-                "recall_a":        valid_groups[a]["recall"],
-                "recall_b":        valid_groups[b]["recall"],
-                "gap":             abs_gap,
-                "gap_signed":      gap_pt,
-                "gap_ci_lower":    gap_lo,
-                "gap_ci_upper":    gap_hi,
+                "group_a": a,
+                "group_b": b,
+                "recall_a": valid_groups[a]["recall"],
+                "recall_b": valid_groups[b]["recall"],
+                "gap": abs_gap,
+                "gap_signed": gap_pt,
+                "gap_ci_lower": gap_lo,
+                "gap_ci_upper": gap_hi,
                 "gap_significant": gap_sig,
-                "concern":         concern,
+                "concern": concern,
             }
 
             level = "⚠️  CONCERN" if concern else "✅ ok"
-            sig   = "(significant)" if gap_sig else "(not significant)"
+            sig = "(significant)" if gap_sig else "(not significant)"
             logger.info(
                 "Gap %s vs %s: %.4f 95%%CI=[%.4f,%.4f] %s %s",
-                a, b, abs_gap, gap_lo, gap_hi, level, sig,
+                a,
+                b,
+                abs_gap,
+                gap_lo,
+                gap_hi,
+                level,
+                sig,
             )
 
     return gaps
@@ -282,10 +298,11 @@ def compute_recall_gap_matrix(
 
 # ─── Calibration Fairness ─────────────────────────────────────────────────────
 
+
 def compute_subgroup_calibration(
-    all_df:       pd.DataFrame,
+    all_df: pd.DataFrame,
     subgroup_col: str,
-    n_bins:       int = 10,
+    n_bins: int = 10,
 ) -> dict:
     """
     Compute ECE and Brier score per subgroup (calibration fairness).
@@ -325,13 +342,13 @@ def compute_subgroup_calibration(
         if len(group_df) == 0:
             continue
 
-        probs  = group_df["probability"].values
+        probs = group_df["probability"].values
         labels = group_df["binary_label"].values
 
         # ECE
         bin_boundaries = np.linspace(0, 1, n_bins + 1)
         ece = 0.0
-        n   = len(labels)
+        n = len(labels)
 
         for lo, hi in zip(bin_boundaries[:-1], bin_boundaries[1:]):
             mask = (probs >= lo) & (probs < hi)
@@ -339,21 +356,25 @@ def compute_subgroup_calibration(
                 continue
 
             bin_conf = probs[mask].mean()
-            bin_acc  = labels[mask].mean()
-            ece     += (mask.sum() / n) * abs(bin_conf - bin_acc)
+            bin_acc = labels[mask].mean()
+            ece += (mask.sum() / n) * abs(bin_conf - bin_acc)
 
         # Brier score
         brier = float(np.mean((probs - labels) ** 2))
 
         results[str(group_val)] = {
-            "ece":         round(float(ece), 4),
+            "ece": round(float(ece), 4),
             "brier_score": round(brier, 4),
-            "n_total":     len(group_df),
+            "n_total": len(group_df),
         }
 
         logger.info(
             "Calibration fairness — %s=%s: ECE=%.4f, Brier=%.4f (n=%d)",
-            subgroup_col, group_val, ece, brier, len(group_df),
+            subgroup_col,
+            group_val,
+            ece,
+            brier,
+            len(group_df),
         )
 
     return results
@@ -361,10 +382,11 @@ def compute_subgroup_calibration(
 
 # ─── Full Fairness Evaluation ─────────────────────────────────────────────────
 
+
 def run_fairness_evaluation(
-    config_path:        str,
+    config_path: str,
     all_predictions_df: pd.DataFrame,
-    run_id:             str,
+    run_id: str,
 ) -> dict:
     """
     Orchestrate Equal Opportunity + calibration fairness across all dimensions.
@@ -391,7 +413,7 @@ def run_fairness_evaluation(
     but cannot be resolved from observational data alone.
     """
     config = yaml.safe_load(open(config_path))
-    df     = all_predictions_df.copy()
+    df = all_predictions_df.copy()
 
     # Create age group column
     if "Patient Age" in df.columns:
@@ -405,26 +427,26 @@ def run_fairness_evaluation(
     results = {}
 
     for dim_name, col_name in [
-        ("gender",        "Patient Gender"),
-        ("age",           "age_group"),
+        ("gender", "Patient Gender"),
+        ("age", "age_group"),
         ("view_position", "View Position"),
     ]:
-        recalls     = compute_subgroup_recall(df, col_name)
-        gaps        = compute_recall_gap_matrix(recalls, df, col_name)
+        recalls = compute_subgroup_recall(df, col_name)
+        gaps = compute_recall_gap_matrix(recalls, df, col_name)
         calibration = compute_subgroup_calibration(df, col_name)
 
         any_concern = any(v["concern"] for v in gaps.values())
 
         results[dim_name] = {
-            "recalls":     recalls,
-            "gaps":        gaps,
+            "recalls": recalls,
+            "gaps": gaps,
             "calibration": calibration,
             "any_concern": any_concern,
         }
 
     any_concern = any(results[d]["any_concern"] for d in ["gender", "age", "view_position"])
     results["any_fairness_concern"] = any_concern
-    results["fairness_threshold"]   = FAIRNESS_THRESHOLD
+    results["fairness_threshold"] = FAIRNESS_THRESHOLD
 
     logger.info(
         "Fairness: gender_concern=%s age_concern=%s view_concern=%s overall=%s",
@@ -443,23 +465,23 @@ def run_fairness_evaluation(
         for gv, stats in dim["recalls"].items():
             if stats["recall"] is not None:
                 sg = gv.replace(" ", "_")
-                mlflow_metrics[f"fairness_{dim_name}_{sg}_recall"]   = stats["recall"]
-                mlflow_metrics[f"fairness_{dim_name}_{sg}_ci_lo"]    = stats["ci_lower"]
-                mlflow_metrics[f"fairness_{dim_name}_{sg}_ci_hi"]    = stats["ci_upper"]
+                mlflow_metrics[f"fairness_{dim_name}_{sg}_recall"] = stats["recall"]
+                mlflow_metrics[f"fairness_{dim_name}_{sg}_ci_lo"] = stats["ci_lower"]
+                mlflow_metrics[f"fairness_{dim_name}_{sg}_ci_hi"] = stats["ci_upper"]
 
         for pk, gd in dim["gaps"].items():
-            mlflow_metrics[f"fairness_{dim_name}_{pk}_gap"]     = gd["gap"]
+            mlflow_metrics[f"fairness_{dim_name}_{pk}_gap"] = gd["gap"]
             mlflow_metrics[f"fairness_{dim_name}_{pk}_concern"] = float(gd["concern"])
-            mlflow_metrics[f"fairness_{dim_name}_{pk}_sig"]     = float(gd["gap_significant"])
+            mlflow_metrics[f"fairness_{dim_name}_{pk}_sig"] = float(gd["gap_significant"])
 
         for gv, cal in dim["calibration"].items():
             sg = gv.replace(" ", "_")
-            mlflow_metrics[f"fairness_{dim_name}_{sg}_ece"]   = cal["ece"]
+            mlflow_metrics[f"fairness_{dim_name}_{sg}_ece"] = cal["ece"]
             mlflow_metrics[f"fairness_{dim_name}_{sg}_brier"] = cal["brier_score"]
 
-    mlflow_metrics["fairness_any_concern"]    = float(any_concern)
-    mlflow_metrics["equal_opportunity_pass"]  = float(not any_concern)
-    mlflow_metrics["fairness_threshold"]      = FAIRNESS_THRESHOLD
+    mlflow_metrics["fairness_any_concern"] = float(any_concern)
+    mlflow_metrics["equal_opportunity_pass"] = float(not any_concern)
+    mlflow_metrics["fairness_threshold"] = FAIRNESS_THRESHOLD
 
     with mlflow.start_run(run_id=run_id):
         mlflow.log_metrics(mlflow_metrics)
@@ -471,12 +493,13 @@ def run_fairness_evaluation(
 
 # ─── Fairness Report Writer ───────────────────────────────────────────────────
 
+
 def _write_fairness_report(results: dict, config: dict) -> None:
     """Write reports/fairness_report.md."""
 
     threshold = results["fairness_threshold"]
-    any_c     = results["any_fairness_concern"]
-    status    = "⚠️  FAIRNESS CONCERNS DETECTED" if any_c else "✅ ALL FAIRNESS CHECKS PASSED"
+    any_c = results["any_fairness_concern"]
+    status = "⚠️  FAIRNESS CONCERNS DETECTED" if any_c else "✅ ALL FAIRNESS CHECKS PASSED"
 
     def fmt_recalls(recalls, calibration, label):
         if not recalls:
@@ -517,8 +540,8 @@ def _write_fairness_report(results: dict, config: dict) -> None:
         lines.append("|---|---|---|---|---|")
 
         for _, g in sorted(gaps.items()):
-            sig  = "✅ Yes" if g["gap_significant"] else "No"
-            con  = "⚠️  YES" if g["concern"]  else "✅ No"
+            sig = "✅ Yes" if g["gap_significant"] else "No"
+            con = "⚠️  YES" if g["concern"] else "✅ No"
             lines.append(
                 f"| {g['group_a']} vs {g['group_b']} | {g['gap']:.4f} | "
                 f"[{g['gap_ci_lower']:.4f}, {g['gap_ci_upper']:.4f}] | {sig} | {con} |"
@@ -546,7 +569,7 @@ def _write_fairness_report(results: dict, config: dict) -> None:
 
 **Secondary metric:** Calibration fairness (ECE + Brier per subgroup)
 
-**Fairness threshold:** recall gap ≤ {threshold:.2f} ({threshold*100:.0f}pp) — policy-defined, not scientific law
+**Fairness threshold:** recall gap ≤ {threshold:.2f} ({threshold * 100:.0f}pp) — policy-defined, not scientific law
 
 **Overall status:** {status}
 
@@ -707,35 +730,36 @@ restores recall parity at the cost of higher FP rate for that subgroup.
 
 # ─── Model Card ───────────────────────────────────────────────────────────────
 
+
 def write_model_card(
-    config_path:          str,
-    eval_results:         dict,
-    fairness_results:     dict,
-    failure_stats:        dict,
+    config_path: str,
+    eval_results: dict,
+    fairness_results: dict,
+    failure_stats: dict,
     gradcam_summary_path: str = "reports/gradcam/summary.md",
 ) -> None:
     """Write reports/model_card.md (Mitchell et al. 2019 structure)."""
 
-    config    = yaml.safe_load(open(config_path))
-    eval_cfg  = config["evaluation"]
+    config = yaml.safe_load(open(config_path))
+    eval_cfg = config["evaluation"]
 
     threshold = eval_results.get("threshold", "N/A")
-    recall    = eval_results.get("recall", "N/A")
+    recall = eval_results.get("recall", "N/A")
     precision = eval_results.get("precision", "N/A")
-    auc_roc   = eval_results.get("auc_roc", "N/A")
-    auc_pr    = eval_results.get("auc_pr", "N/A")
-    brier     = eval_results.get("brier", "N/A")
-    brier_b   = eval_results.get("brier_naive", "N/A")
-    r_ci      = eval_results.get("recall_ci", ("N/A", "N/A"))
-    cost_r    = eval_results.get("cost_stats", {}).get("cost_reduction_pct", "N/A")
+    auc_roc = eval_results.get("auc_roc", "N/A")
+    auc_pr = eval_results.get("auc_pr", "N/A")
+    brier = eval_results.get("brier", "N/A")
+    brier_b = eval_results.get("brier_naive", "N/A")
+    r_ci = eval_results.get("recall_ci", ("N/A", "N/A"))
+    cost_r = eval_results.get("cost_stats", {}).get("cost_reduction_pct", "N/A")
     mcnemar_p = eval_results.get("mcnemar", {}).get("p_value", "N/A")
-    all_pass  = eval_results.get("quality_gates", {}).get("all_pass", False)
+    all_pass = eval_results.get("quality_gates", {}).get("all_pass", False)
 
-    fair_any  = fairness_results.get("any_fairness_concern", False)
-    fp_count  = failure_stats.get("fp_count", "N/A")
-    fn_count  = failure_stats.get("fn_count", "N/A")
-    fn_high   = failure_stats.get("fn_high_conf_count", "N/A")
-    fp_high   = failure_stats.get("fp_high_conf_count", "N/A")
+    fair_any = fairness_results.get("any_fairness_concern", False)
+    fp_count = failure_stats.get("fp_count", "N/A")
+    fn_count = failure_stats.get("fn_count", "N/A")
+    fn_high = failure_stats.get("fn_high_conf_count", "N/A")
+    fp_high = failure_stats.get("fp_high_conf_count", "N/A")
 
     gradcam_note = "[See reports/gradcam/summary.md]"
     if Path(gradcam_summary_path).exists():
@@ -965,11 +989,11 @@ McNemar's p vs naive: {mcnemar_str}
 
 |---|---|---|---|---|
 
-| Gender | {max((v["gap"] for v in fairness_results.get("gender",{}).get("gaps",{}).values()), default=0):.4f} | [populate] | [populate from L10] | {"⚠️" if fairness_results.get("gender",{}).get("any_concern") else "✅"} |
+| Gender | {max((v["gap"] for v in fairness_results.get("gender", {}).get("gaps", {}).values()), default=0):.4f} | [populate] | [populate from L10] | {"⚠️" if fairness_results.get("gender", {}).get("any_concern") else "✅"} |
 
-| Age group | {max((v["gap"] for v in fairness_results.get("age",{}).get("gaps",{}).values()), default=0):.4f} | [populate] | [populate] | {"⚠️" if fairness_results.get("age",{}).get("any_concern") else "✅"} |
+| Age group | {max((v["gap"] for v in fairness_results.get("age", {}).get("gaps", {}).values()), default=0):.4f} | [populate] | [populate] | {"⚠️" if fairness_results.get("age", {}).get("any_concern") else "✅"} |
 
-| View Position | {max((v["gap"] for v in fairness_results.get("view_position",{}).get("gaps",{}).values()), default=0):.4f} | [populate] | [populate] | {"⚠️" if fairness_results.get("view_position",{}).get("any_concern") else "✅"} |
+| View Position | {max((v["gap"] for v in fairness_results.get("view_position", {}).get("gaps", {}).values()), default=0):.4f} | [populate] | [populate] | {"⚠️" if fairness_results.get("view_position", {}).get("any_concern") else "✅"} |
 
 *Gap significance tested by bootstrapping the gap distribution directly.*
 

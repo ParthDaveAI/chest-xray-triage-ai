@@ -14,7 +14,6 @@ Tests (4):
 """
 
 import pytest
-
 import torch
 
 pytestmark = pytest.mark.unit
@@ -22,21 +21,25 @@ pytestmark = pytest.mark.unit
 
 def test_u41_all_metrics_defined():
     """U41: All required metric objects exist with correct Prometheus types."""
-    from prometheus_client import Counter, Histogram, Gauge
+    from prometheus_client import Counter, Gauge, Histogram
+
     from src.monitor import (
-        INFERENCE_COUNTER, INFERENCE_TIER_COUNTER,
-        VALIDATION_FAILURE_COUNTER, INFERENCE_LATENCY,
-        MODEL_LOADED_GAUGE, DEGRADED_MODE_GAUGE,
+        DEGRADED_MODE_GAUGE,
         EMBEDDING_REQUEST_COUNTER,
+        INFERENCE_COUNTER,
+        INFERENCE_LATENCY,
+        INFERENCE_TIER_COUNTER,
+        MODEL_LOADED_GAUGE,
+        VALIDATION_FAILURE_COUNTER,
     )
 
-    assert isinstance(INFERENCE_COUNTER,          Counter)
-    assert isinstance(INFERENCE_TIER_COUNTER,     Counter)
+    assert isinstance(INFERENCE_COUNTER, Counter)
+    assert isinstance(INFERENCE_TIER_COUNTER, Counter)
     assert isinstance(VALIDATION_FAILURE_COUNTER, Counter)
-    assert isinstance(INFERENCE_LATENCY,          Histogram)
-    assert isinstance(MODEL_LOADED_GAUGE,         Gauge)
-    assert isinstance(DEGRADED_MODE_GAUGE,        Gauge)
-    assert isinstance(EMBEDDING_REQUEST_COUNTER,  Counter)
+    assert isinstance(INFERENCE_LATENCY, Histogram)
+    assert isinstance(MODEL_LOADED_GAUGE, Gauge)
+    assert isinstance(DEGRADED_MODE_GAUGE, Gauge)
+    assert isinstance(EMBEDDING_REQUEST_COUNTER, Counter)
 
 
 def test_u42_inference_counter_labels():
@@ -50,8 +53,9 @@ def test_u43_latency_histogram_sla_bucket():
     """U43: INFERENCE_LATENCY includes the 0.5s SLA threshold bucket."""
     from src.monitor import INFERENCE_LATENCY
 
-    assert 0.5 in INFERENCE_LATENCY._upper_bounds, \
+    assert 0.5 in INFERENCE_LATENCY._upper_bounds, (
         "INFERENCE_LATENCY must include 0.5s bucket — this is the SLA threshold"
+    )
 
 
 def test_u44_get_penultimate_features_deterministic(synthetic_model):

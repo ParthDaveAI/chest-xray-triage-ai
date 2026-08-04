@@ -55,6 +55,7 @@ REQUIRED_COLUMNS = [
 
 # ── Data Validation ────────────────────────────────────────────────────────────
 
+
 def validate_dataset_schema(df: pd.DataFrame) -> None:
     """
     Validate that the loaded CSV matches expected schema and distribution.
@@ -88,9 +89,7 @@ def validate_dataset_schema(df: pd.DataFrame) -> None:
         )
 
     # Check 3: Class distribution sanity after binary mapping
-    binary_labels = df["Finding Labels"].apply(
-        lambda x: 0 if str(x).strip() == NORMAL_LABEL else 1
-    )
+    binary_labels = df["Finding Labels"].apply(lambda x: 0 if str(x).strip() == NORMAL_LABEL else 1)
     suspicious_pct = binary_labels.mean() * 100
     if not (30.0 <= suspicious_pct <= 70.0):
         raise ValueError(
@@ -101,11 +100,13 @@ def validate_dataset_schema(df: pd.DataFrame) -> None:
 
     logger.info(
         "Schema validation passed. Suspicious: %.1f%%, Normal: %.1f%%",
-        suspicious_pct, 100 - suspicious_pct,
+        suspicious_pct,
+        100 - suspicious_pct,
     )
 
 
 # ── Binary Label Creation ──────────────────────────────────────────────────────
+
 
 def create_binary_labels(df: pd.DataFrame) -> pd.DataFrame:
     """
@@ -136,14 +137,17 @@ def create_binary_labels(df: pd.DataFrame) -> pd.DataFrame:
 
     logger.info(
         "Binary labels created. Normal: %d (%.1f%%), Suspicious: %d (%.1f%%)",
-        normal_count, normal_count / total * 100,
-        suspicious_count, suspicious_count / total * 100,
+        normal_count,
+        normal_count / total * 100,
+        suspicious_count,
+        suspicious_count / total * 100,
     )
 
     return df
 
 
 # ── Patient-Level Split ────────────────────────────────────────────────────────
+
 
 def create_patient_level_split(
     df: pd.DataFrame,
@@ -233,18 +237,28 @@ def create_patient_level_split(
     ]:
         suspicious_pct = split_df["binary_label"].mean() * 100
         deviation = abs(suspicious_pct - overall_suspicious_pct)
-        deviation_flag = " ⚠️ DISTRIBUTION DEVIATION" if deviation > distribution_warning_threshold else ""
+        deviation_flag = (
+            " ⚠️ DISTRIBUTION DEVIATION" if deviation > distribution_warning_threshold else ""
+        )
         logger.info(
             "%s: %d patients, %d images, Suspicious=%.1f%% (overall=%.1f%%, deviation=%.1f%%)%s",
-            split_name, len(patient_arr), len(split_df),
-            suspicious_pct, overall_suspicious_pct, deviation, deviation_flag,
+            split_name,
+            len(patient_arr),
+            len(split_df),
+            suspicious_pct,
+            overall_suspicious_pct,
+            deviation,
+            deviation_flag,
         )
         if deviation > distribution_warning_threshold:
             logger.warning(
                 "%s split Suspicious%% (%.1f%%) deviates %.1f pp from overall (%.1f%%). "
                 "This is expected with patient-level splitting but should be documented "
                 "in data/data_card.md.",
-                split_name, suspicious_pct, deviation, overall_suspicious_pct,
+                split_name,
+                suspicious_pct,
+                deviation,
+                overall_suspicious_pct,
             )
 
     return train_df, val_df, test_df
@@ -283,12 +297,11 @@ def _verify_no_patient_overlap(
             f"Do not proceed until overlap is zero."
         )
 
-    logger.info(
-        "Leakage check passed: zero patient overlap across all splits."
-    )
+    logger.info("Leakage check passed: zero patient overlap across all splits.")
 
 
 # ── Split Manifest Hash ────────────────────────────────────────────────────────
+
 
 def save_and_hash_split_manifest(
     train_df: pd.DataFrame,
@@ -345,14 +358,13 @@ def save_and_hash_split_manifest(
 
     file_hash = hashlib.sha256(Path(save_path).read_bytes()).hexdigest()
 
-    logger.info(
-        "Split manifest written: %s\nSHA256: %s", save_path, file_hash
-    )
+    logger.info("Split manifest written: %s\nSHA256: %s", save_path, file_hash)
 
     return file_hash
 
 
 # ── Full Preparation Pipeline ──────────────────────────────────────────────────
+
 
 def prepare_dataset(
     labels_csv_path: str,
@@ -405,9 +417,7 @@ def prepare_dataset(
     df = create_binary_labels(df)
 
     # Step 4: Build image paths
-    df["image_path"] = df["Image Index"].apply(
-        lambda x: str(Path(images_dir) / x)
-    )
+    df["image_path"] = df["Image Index"].apply(lambda x: str(Path(images_dir) / x))
 
     # Step 5: Enforce missing-file failure threshold
     exists_mask = df["image_path"].apply(lambda p: Path(p).exists())
@@ -418,7 +428,7 @@ def prepare_dataset(
     if missing_pct > threshold:
         raise ValueError(
             f"Missing file threshold exceeded: {missing_count} files missing "
-            f"({missing_pct*100:.1f}% > threshold {threshold*100:.1f}%).\n"
+            f"({missing_pct * 100:.1f}% > threshold {threshold * 100:.1f}%).\n"
             f"Verify all image archives are fully extracted.\n"
             f"Expected image count: 112,120"
         )
@@ -426,7 +436,8 @@ def prepare_dataset(
     if missing_count > 0:
         logger.warning(
             "%d files missing (%.2f%% — within threshold). Removing from dataset.",
-            missing_count, missing_pct * 100,
+            missing_count,
+            missing_pct * 100,
         )
 
     df = df[exists_mask].reset_index(drop=True)
@@ -438,9 +449,11 @@ def prepare_dataset(
         # Stratified sampling to preserve class balance in subset
         df = (
             df.groupby("binary_label", group_keys=False)
-            .apply(lambda x: x.sample(
-                min(len(x), subset_size // 2), random_state=data_cfg["random_seed"]
-            ))
+            .apply(
+                lambda x: x.sample(
+                    min(len(x), subset_size // 2), random_state=data_cfg["random_seed"]
+                )
+            )
             .reset_index(drop=True)
         )
         logger.warning(

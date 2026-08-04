@@ -57,6 +57,7 @@ REQUIRED_COLUMNS = {"image_path", "binary_label"}
 
 # ── Transform Builders ─────────────────────────────────────────────────────────
 
+
 def get_inference_transform(config: dict) -> transforms.Compose:
     """
     Return the preprocessing pipeline for inference: val, test, and serving.
@@ -99,14 +100,16 @@ def get_inference_transform(config: dict) -> transforms.Compose:
     """
     img_size = config["data"]["image_size"]
 
-    return transforms.Compose([
-        transforms.Resize((img_size, img_size)),
-        transforms.ToTensor(),
-        transforms.Normalize(
-            mean=[0.485, 0.456, 0.406],  # ImageNet per-channel mean
-            std=[0.229, 0.224, 0.225],   # ImageNet per-channel std
-        ),
-    ])
+    return transforms.Compose(
+        [
+            transforms.Resize((img_size, img_size)),
+            transforms.ToTensor(),
+            transforms.Normalize(
+                mean=[0.485, 0.456, 0.406],  # ImageNet per-channel mean
+                std=[0.229, 0.224, 0.225],  # ImageNet per-channel std
+            ),
+        ]
+    )
 
 
 def _build_train_transform(config: dict) -> transforms.Compose:
@@ -168,15 +171,15 @@ def _build_train_transform(config: dict) -> transforms.Compose:
         augmentation_steps.append(transforms.RandomVerticalFlip(p=0.5))
 
     if aug.get("rotation_degrees", 0) > 0:
-        augmentation_steps.append(
-            transforms.RandomRotation(degrees=aug["rotation_degrees"])
-        )
+        augmentation_steps.append(transforms.RandomRotation(degrees=aug["rotation_degrees"]))
 
     if aug.get("color_jitter", False):
-        augmentation_steps.append(transforms.ColorJitter(
-            brightness=aug.get("color_jitter_brightness", 0.2),
-            contrast=aug.get("color_jitter_contrast", 0.2),
-        ))
+        augmentation_steps.append(
+            transforms.ColorJitter(
+                brightness=aug.get("color_jitter_brightness", 0.2),
+                contrast=aug.get("color_jitter_contrast", 0.2),
+            )
+        )
 
     base_steps = [
         transforms.Resize((img_size, img_size)),
@@ -191,6 +194,7 @@ def _build_train_transform(config: dict) -> transforms.Compose:
 
 
 # ── Worker Init Function — Reproducible Augmentation ──────────────────────────
+
 
 def _worker_init_fn(worker_id: int) -> None:
     """
@@ -207,12 +211,13 @@ def _worker_init_fn(worker_id: int) -> None:
 
     Passed to DataLoader as: worker_init_fn=_worker_init_fn
     """
-    seed = torch.initial_seed() % (2 ** 32)
+    seed = torch.initial_seed() % (2**32)
     np.random.seed(seed)
     random.seed(seed)
 
 
 # ── Dataset Class ──────────────────────────────────────────────────────────────
+
 
 class ChestXRayDataset(Dataset):
     """
@@ -297,17 +302,17 @@ class ChestXRayDataset(Dataset):
 
         if missing_frac > missing_file_threshold:
             raise RuntimeError(
-                f"{missing_count} image files ({missing_frac*100:.1f}%) are missing.\n"
-                f"Threshold: {missing_file_threshold*100:.1f}%.\n"
+                f"{missing_count} image files ({missing_frac * 100:.1f}%) are missing.\n"
+                f"Threshold: {missing_file_threshold * 100:.1f}%.\n"
                 f"Verify all NIH image archives (images_001–012) are extracted to "
                 f"data/raw/images/.\nExpected total: 112,120 images."
             )
 
         if missing_count > 0:
             logger.warning(
-                "%d image files missing (%.2f%% — within threshold). "
-                "Removing those rows.",
-                missing_count, missing_frac * 100,
+                "%d image files missing (%.2f%% — within threshold). Removing those rows.",
+                missing_count,
+                missing_frac * 100,
             )
 
         self.df = df[exists_mask].reset_index(drop=True)
@@ -323,9 +328,9 @@ class ChestXRayDataset(Dataset):
 
         transform_names = [type(t).__name__ for t in self.transform.transforms]
         logger.info(
-            "ChestXRayDataset: mode=%s, images=%d, suspicious=%.1f%%, "
-            "transforms=%s",
-            mode, len(self.df),
+            "ChestXRayDataset: mode=%s, images=%d, suspicious=%.1f%%, transforms=%s",
+            mode,
+            len(self.df),
             (self.df["binary_label"] == 1).mean() * 100,
             transform_names,
         )
@@ -373,7 +378,9 @@ class ChestXRayDataset(Dataset):
                 # Skip corrupted image during training — log and return next valid sample
                 logger.warning(
                     "Skipping corrupted image at idx=%d: %s\nError: %s",
-                    idx, img_path, e,
+                    idx,
+                    img_path,
+                    e,
                 )
                 # Find next valid sample by incrementing index
                 next_idx = (idx + 1) % len(self)
@@ -394,6 +401,7 @@ class ChestXRayDataset(Dataset):
 
 
 # ── DataLoader Factory ─────────────────────────────────────────────────────────
+
 
 def create_dataloaders(
     train_df: pd.DataFrame,
@@ -481,8 +489,12 @@ def create_dataloaders(
         "  Train: %d batches (shuffle=True, drop_last=True, persistent_workers=True)\n"
         "  Val:   %d batches (shuffle=False, drop_last=False)\n"
         "  Test:  %d batches (shuffle=False, drop_last=False)",
-        num_workers, use_pin_memory, batch_size,
-        len(train_loader), len(val_loader), len(test_loader),
+        num_workers,
+        use_pin_memory,
+        batch_size,
+        len(train_loader),
+        len(val_loader),
+        len(test_loader),
     )
 
     return train_loader, val_loader, test_loader

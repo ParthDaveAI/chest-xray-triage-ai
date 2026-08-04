@@ -18,22 +18,17 @@ Tests (4):
 """
 
 import inspect
-
 import io
 
 import numpy as np
-
 import pytest
-
 from fastapi.testclient import TestClient
-
 from PIL import Image
 
 pytestmark = pytest.mark.tier1
 
 
 @pytest.fixture(scope="module")
-
 def client():
     """
     FastAPI TestClient using context manager to trigger lifespan events.
@@ -52,7 +47,7 @@ def client():
 def _make_png(w=256, h=256, uniform=False):
     arr = np.full((h, w, 3), 128, dtype=np.uint8)
     if not uniform:
-        arr[50:100, 50:100]   = 220
+        arr[50:100, 50:100] = 220
         arr[150:200, 150:200] = 30
     buf = io.BytesIO()
     Image.fromarray(arr).save(buf, format="PNG")
@@ -77,19 +72,18 @@ def test_t1_2_tiny_image_422_in_degraded_mode(client):
     always a 4xx error, never a 5xx infrastructure error.
     """
     tiny = _make_png(10, 10)
-    resp = client.post("/predict/image",
-                       files={"file": ("tiny.png", tiny, "image/png")})
+    resp = client.post("/predict/image", files={"file": ("tiny.png", tiny, "image/png")})
 
-    assert resp.status_code == 422, \
-        f"Expected 422 for tiny image, got {resp.status_code}. " \
+    assert resp.status_code == 422, (
+        f"Expected 422 for tiny image, got {resp.status_code}. "
         f"Check that validate_image() runs before degraded mode check in serve.py."
+    )
 
 
 def test_t1_3_blank_image_422_in_degraded_mode(client):
     """T1-3: Blank image returns 422 even when model not loaded."""
     blank = _make_png(256, 256, uniform=True)
-    resp  = client.post("/predict/image",
-                        files={"file": ("blank.png", blank, "image/png")})
+    resp = client.post("/predict/image", files={"file": ("blank.png", blank, "image/png")})
 
     assert resp.status_code == 422
 
@@ -103,7 +97,8 @@ def test_t1_4_predict_endpoint_is_sync():
     """
     from src.serve import predict_image
 
-    assert not inspect.iscoroutinefunction(predict_image), \
-        "predict_image MUST be synchronous def, not async def. " \
-        "CPU-bound PyTorch inference in async def blocks the event loop, " \
+    assert not inspect.iscoroutinefunction(predict_image), (
+        "predict_image MUST be synchronous def, not async def. "
+        "CPU-bound PyTorch inference in async def blocks the event loop, "
         "making health probes unresponsive under load."
+    )

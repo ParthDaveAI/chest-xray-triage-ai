@@ -16,11 +16,8 @@ Tests (5):
 """
 
 import numpy as np
-
 import pytest
-
 import torch
-
 from pytest import approx
 
 pytestmark = pytest.mark.unit
@@ -40,10 +37,12 @@ def test_u20_confidence_high_for_low_prob():
 
     result = assign_triage_and_confidence(np.array([0.02]), threshold=0.35)
 
-    assert float(result["model_confidence"].iloc[0]) == approx(0.98, abs=1e-4), \
+    assert float(result["model_confidence"].iloc[0]) == approx(0.98, abs=1e-4), (
         "P=0.02 must give model_confidence=0.98 (98% confident Normal)"
-    assert result["conf_level"].iloc[0] == "High", \
+    )
+    assert result["conf_level"].iloc[0] == "High", (
         "P=0.02 must be conf_level='High' — model is highly certain, just about Normal"
+    )
 
 
 def test_u21_confidence_low_for_ambiguous():
@@ -64,10 +63,10 @@ def test_u22_triage_tier_boundaries():
 
     cases = [
         (0.95, "Tier1"),
-        (0.80, "Tier1"),   # boundary inclusive
+        (0.80, "Tier1"),  # boundary inclusive
         (0.79, "Tier2"),
-        (0.50, "Tier2"),   # boundary inclusive
-        (0.49, "Tier3"),   # above threshold, below Tier2
+        (0.50, "Tier2"),  # boundary inclusive
+        (0.49, "Tier3"),  # above threshold, below Tier2
         (0.36, "Tier3"),
         (0.34, "Normal"),  # below threshold
         (0.02, "Normal"),
@@ -85,8 +84,11 @@ def test_u23_failure_counts_sum_to_total(synthetic_dataframe, test_config, synth
     from src.failure_analysis import extract_failure_cases
 
     _, _, loader = create_dataloaders(
-        synthetic_dataframe, synthetic_dataframe, synthetic_dataframe,
-        test_config, num_workers=0,
+        synthetic_dataframe,
+        synthetic_dataframe,
+        synthetic_dataframe,
+        test_config,
+        num_workers=0,
     )
 
     fp, fn, all_df = extract_failure_cases(
@@ -94,11 +96,14 @@ def test_u23_failure_counts_sum_to_total(synthetic_dataframe, test_config, synth
     )
 
     total = len(all_df)
-    counts = sum([
-        len(fp), len(fn),
-        int((all_df["error_type"] == "TP").sum()),
-        int((all_df["error_type"] == "TN").sum()),
-    ])
+    counts = sum(
+        [
+            len(fp),
+            len(fn),
+            int((all_df["error_type"] == "TP").sum()),
+            int((all_df["error_type"] == "TN").sum()),
+        ]
+    )
 
     assert counts == total
 
@@ -109,8 +114,11 @@ def test_u24_failure_case_labels(synthetic_dataframe, test_config, synthetic_mod
     from src.failure_analysis import extract_failure_cases
 
     _, _, loader = create_dataloaders(
-        synthetic_dataframe, synthetic_dataframe, synthetic_dataframe,
-        test_config, num_workers=0,
+        synthetic_dataframe,
+        synthetic_dataframe,
+        synthetic_dataframe,
+        test_config,
+        num_workers=0,
     )
 
     fp, fn, _ = extract_failure_cases(

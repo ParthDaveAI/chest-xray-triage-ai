@@ -12,7 +12,6 @@ Tests (3):
 """
 
 import numpy as np
-
 import pytest
 
 pytestmark = pytest.mark.unit
@@ -28,8 +27,8 @@ def test_u1_patient_overlap_raises():
     from src.data_prep import _verify_no_patient_overlap
 
     train_ids = np.array([1, 2, 3, 4, 5])
-    val_ids   = np.array([6, 7, 8, 9, 10])
-    test_ids  = np.array([4, 5, 11, 12, 13])   # 4 and 5 overlap with train
+    val_ids = np.array([6, 7, 8, 9, 10])
+    test_ids = np.array([4, 5, 11, 12, 13])  # 4 and 5 overlap with train
 
     with pytest.raises(ValueError, match="overlap"):
         _verify_no_patient_overlap(train_ids, val_ids, test_ids)
@@ -40,8 +39,8 @@ def test_u2_patient_overlap_passes_disjoint():
     from src.data_prep import _verify_no_patient_overlap
 
     train_ids = np.array([1, 2, 3])
-    val_ids   = np.array([4, 5, 6])
-    test_ids  = np.array([7, 8, 9])
+    val_ids = np.array([4, 5, 6])
+    test_ids = np.array([7, 8, 9])
 
     # Should not raise
     _verify_no_patient_overlap(train_ids, val_ids, test_ids)

@@ -16,9 +16,7 @@ Tests (5):
 """
 
 import pytest
-
 import torch
-
 import torch.nn as nn
 
 pytestmark = pytest.mark.unit
@@ -59,17 +57,19 @@ def test_u12_bn_stays_eval_after_freeze(synthetic_model):
     patterns during inference, producing inconsistent predictions.
     """
     synthetic_model.freeze_backbone()
-    synthetic_model.train()   # would normally set all BN to train mode
+    synthetic_model.train()  # would normally set all BN to train mode
 
-    bn_layers = [m for m in synthetic_model.backbone.features.modules()
-                 if isinstance(m, nn.BatchNorm2d)]
+    bn_layers = [
+        m for m in synthetic_model.backbone.features.modules() if isinstance(m, nn.BatchNorm2d)
+    ]
 
     assert len(bn_layers) > 0, "EfficientNet-B0 must have BatchNorm2d layers"
 
     for bn in bn_layers:
-        assert not bn.training, \
-            "BatchNorm must remain in eval mode after freeze_backbone() + train(). " \
+        assert not bn.training, (
+            "BatchNorm must remain in eval mode after freeze_backbone() + train(). "
             "requires_grad=False alone does not prevent BN from updating running stats."
+        )
 
 
 def test_u13_classifier_unfrozen_after_freeze(synthetic_model):

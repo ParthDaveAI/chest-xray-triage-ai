@@ -19,11 +19,13 @@ from pathlib import Path
 
 import pytest
 
-ARTIFACTS_OK = all([
-    Path("artifacts/best_model.pt").exists(),
-    Path("artifacts/threshold.txt").exists(),
-    Path("artifacts/test_df.parquet").exists(),
-])
+ARTIFACTS_OK = all(
+    [
+        Path("artifacts/best_model.pt").exists(),
+        Path("artifacts/threshold.txt").exists(),
+        Path("artifacts/test_df.parquet").exists(),
+    ]
+)
 
 pytestmark = [
     pytest.mark.tier2,

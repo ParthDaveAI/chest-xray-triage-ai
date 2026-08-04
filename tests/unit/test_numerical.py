@@ -13,14 +13,8 @@ Tests (4):
 
 """
 
-import inspect
-
 import pytest
-
 import torch
-
-import numpy as np
-
 from pytest import approx
 
 pytestmark = pytest.mark.unit
@@ -29,21 +23,21 @@ pytestmark = pytest.mark.unit
 def test_u37_no_nan_inf_in_output(synthetic_model):
     """U37: Softmax output contains no NaN or Inf for valid and edge-case inputs."""
     inputs = [
-        torch.zeros(1, 3, 224, 224),           # all-zero tensor
-        torch.ones(1, 3, 224, 224),            # all-one tensor
-        torch.randn(1, 3, 224, 224),           # random Gaussian
-        torch.randn(1, 3, 224, 224) * 10,     # large magnitude
+        torch.zeros(1, 3, 224, 224),  # all-zero tensor
+        torch.ones(1, 3, 224, 224),  # all-one tensor
+        torch.randn(1, 3, 224, 224),  # random Gaussian
+        torch.randn(1, 3, 224, 224) * 10,  # large magnitude
     ]
 
     for tensor in inputs:
         with torch.no_grad():
             logits = synthetic_model(tensor)
-            probs  = torch.softmax(logits, dim=1)
+            probs = torch.softmax(logits, dim=1)
 
-        assert not torch.isnan(probs).any(), \
+        assert not torch.isnan(probs).any(), (
             f"NaN in softmax output for input with max={tensor.max():.2f}"
-        assert not torch.isinf(probs).any(), \
-            f"Inf in softmax output"
+        )
+        assert not torch.isinf(probs).any(), "Inf in softmax output"
 
 
 def test_u38_softmax_sums_to_one(synthetic_model):
@@ -52,7 +46,7 @@ def test_u38_softmax_sums_to_one(synthetic_model):
 
     with torch.no_grad():
         logits = synthetic_model(dummy)
-        probs  = torch.softmax(logits, dim=1)
+        probs = torch.softmax(logits, dim=1)
 
     assert probs.min().item() >= 0.0
     assert probs.max().item() <= 1.0
@@ -85,19 +79,21 @@ def test_u40_training_serving_transform_identical(test_config, synthetic_image_p
     If serve.py redefines its own transform, it can silently diverge from
     the evaluation pipeline — test metrics become invalid in production.
     """
-    from src.dataset import get_inference_transform as dataset_fn
     import src.serve as serve_module
+    from src.dataset import get_inference_transform as dataset_fn
 
     # Contract 1: same function object (imported, not redefined)
-    assert serve_module.get_inference_transform is dataset_fn, \
-        "serve.py must import get_inference_transform from src.dataset, not redefine it. " \
+    assert serve_module.get_inference_transform is dataset_fn, (
+        "serve.py must import get_inference_transform from src.dataset, not redefine it. "
         "Redefining creates training/serving skew risk."
+    )
 
     # Contract 2: same input produces identical tensor values
     transform = dataset_fn(test_config)
-    tensor_a  = transform(synthetic_image_pil)
-    tensor_b  = transform(synthetic_image_pil)
+    tensor_a = transform(synthetic_image_pil)
+    tensor_b = transform(synthetic_image_pil)
 
-    assert torch.equal(tensor_a, tensor_b), \
-        "Same image through same transform must produce identical tensors. " \
+    assert torch.equal(tensor_a, tensor_b), (
+        "Same image through same transform must produce identical tensors. "
         "Non-determinism in preprocessing indicates a bug."
+    )

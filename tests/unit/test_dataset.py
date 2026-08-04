@@ -16,7 +16,6 @@ Tests (5):
 """
 
 import pytest
-
 import torch
 
 pytestmark = pytest.mark.unit
@@ -51,7 +50,6 @@ def test_u6_dataset_getitem_shape(synthetic_dataframe, test_config):
 
 def test_u7_train_mode_missing_image_skips(synthetic_dataframe, test_config, tmp_path):
     """U7: Train mode skips missing images — returns next valid item."""
-    import pandas as pd
     from src.dataset import ChestXRayDataset
 
     bad_df = synthetic_dataframe.copy()
@@ -65,7 +63,6 @@ def test_u7_train_mode_missing_image_skips(synthetic_dataframe, test_config, tmp
 
 def test_u8_val_mode_missing_image_raises(synthetic_dataframe, test_config, tmp_path):
     """U8: Val/test mode raises RuntimeError for missing images."""
-    import pandas as pd
     from src.dataset import ChestXRayDataset
 
     bad_df = synthetic_dataframe.copy()

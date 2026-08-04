@@ -47,61 +47,60 @@ CPU-ONLY:
 import hashlib
 import io
 import logging
-import os
 import time
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import NamedTuple, Optional
+from typing import NamedTuple
 
 import numpy as np
 import torch
 import yaml
-from fastapi import FastAPI, File, HTTPException, UploadFile, status
+from fastapi import FastAPI, File, Header, HTTPException, UploadFile, status
 from fastapi.responses import Response as FastAPIResponse
 from PIL import Image, ImageStat
-from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import BaseModel, ConfigDict, Field
 
 from src.dataset import get_inference_transform
 from src.model import ChestXRayClassifier
 from src.monitor import (
-    INFERENCE_COUNTER,
-    INFERENCE_TIER_COUNTER,
-    VALIDATION_FAILURE_COUNTER,
-    INFERENCE_LATENCY,
-    EMBEDDING_LATENCY,
-    MODEL_LOADED_GAUGE,
     DEGRADED_MODE_GAUGE,
+    EMBEDDING_LATENCY,
     EMBEDDING_REQUEST_COUNTER,
+    INFERENCE_COUNTER,
+    INFERENCE_LATENCY,
+    INFERENCE_TIER_COUNTER,
+    MODEL_LOADED_GAUGE,
+    VALIDATION_FAILURE_COUNTER,
 )
 
 logger = logging.getLogger(__name__)
 
 # ── Constants ──────────────────────────────────────────────────────────────────
 
-CONFIG_PATH    = "config/training_config.yaml"
-MODEL_PATH     = "artifacts/best_model.pt"
+CONFIG_PATH = "config/training_config.yaml"
+MODEL_PATH = "artifacts/best_model.pt"
 THRESHOLD_PATH = "artifacts/threshold.txt"
 
-MIN_IMAGE_SIZE_PX   = 32        # minimum dimension
-MAX_IMAGE_DIM_PX    = 8000      # maximum dimension — caps memory spike from giant images
-MAX_IMAGE_PIXELS    = 50_000_000  # PIL decompression bomb cap (50 megapixels)
-MIN_IMAGE_VARIANCE  = 10.0      # below this, image is blank
-MAX_BYTES           = 10 * 1024 * 1024  # 10MB file size limit
+MIN_IMAGE_SIZE_PX = 32  # minimum dimension
+MAX_IMAGE_DIM_PX = 8000  # maximum dimension — caps memory spike from giant images
+MAX_IMAGE_PIXELS = 50_000_000  # PIL decompression bomb cap (50 megapixels)
+MIN_IMAGE_VARIANCE = 10.0  # below this, image is blank
+MAX_BYTES = 10 * 1024 * 1024  # 10MB file size limit
 
 # Three-tier thresholds (design canvas, L8)
 TIER1_MIN = 0.80
 TIER2_MIN = 0.50
 CONF_HIGH = 0.80
-CONF_MOD  = 0.65
+CONF_MOD = 0.65
 
 # Accepted MIME types (magic-byte validation in validate_image)
 ACCEPTED_CONTENT_TYPES = {"image/png", "image/jpeg", "image/jpg"}
 
 # Internal service header for /embeddings endpoint
 INTERNAL_SERVICE_HEADER = "X-Internal-Service"
-INTERNAL_SERVICE_VALUE  = "p4-monitoring"
+INTERNAL_SERVICE_VALUE = "p4-monitoring"
 
 # PIL decompression bomb protection — set before any Image.open() calls
 Image.MAX_IMAGE_PIXELS = MAX_IMAGE_PIXELS
@@ -109,41 +108,45 @@ Image.MAX_IMAGE_PIXELS = MAX_IMAGE_PIXELS
 
 # ── Pydantic v2 Schemas — Strict Mode ─────────────────────────────────────────
 
+
 class PredictionResponse(BaseModel):
     """
     Structured triage decision. All fields are strictly typed.
     ConfigDict(strict=True) prevents silent type coercion (e.g., str→float).
     model_hash provides prediction provenance for audit trail.
     """
+
     model_config = ConfigDict(strict=True)
 
-    prediction:            str   = Field(..., description="Normal or Suspicious")
-    probability:           float = Field(..., ge=0.0, le=1.0)
-    triage_tier:           str   = Field(..., description="Tier1/Tier2/Tier3/Normal")
-    model_confidence:      float = Field(..., ge=0.5, le=1.0)
-    conf_level:            str   = Field(..., description="High/Moderate/Low")
-    threshold_used:        float = Field(...)
-    requires_human_review: bool  = Field(..., description="True for Tier3 or low confidence")
-    model_hash:            str   = Field(..., description="MD5 of best_model.pt — prediction provenance")
-    inference_ms:          float = Field(...)
-    request_id:            str   = Field(default_factory=lambda: str(uuid.uuid4())[:8])
+    prediction: str = Field(..., description="Normal or Suspicious")
+    probability: float = Field(..., ge=0.0, le=1.0)
+    triage_tier: str = Field(..., description="Tier1/Tier2/Tier3/Normal")
+    model_confidence: float = Field(..., ge=0.5, le=1.0)
+    conf_level: str = Field(..., description="High/Moderate/Low")
+    threshold_used: float = Field(...)
+    requires_human_review: bool = Field(..., description="True for Tier3 or low confidence")
+    model_hash: str = Field(..., description="MD5 of best_model.pt — prediction provenance")
+    inference_ms: float = Field(...)
+    request_id: str = Field(default_factory=lambda: str(uuid.uuid4())[:8])
 
 
 class HealthResponse(BaseModel):
     model_config = ConfigDict(strict=True)
 
-    status:         str
-    model_loaded:   bool
-    degraded:       bool
-    config_drift:   bool  = Field(False, description="True if serving config differs from training config")
-    threshold:      Optional[float] = None
-    model_hash:     Optional[str]   = None
+    status: str
+    model_loaded: bool
+    degraded: bool
+    config_drift: bool = Field(
+        False, description="True if serving config differs from training config"
+    )
+    threshold: float | None = None
+    model_hash: str | None = None
 
 
 class ErrorResponse(BaseModel):
     model_config = ConfigDict(strict=True)
 
-    detail:     str
+    detail: str
     error_code: str
     request_id: str = Field(default_factory=lambda: str(uuid.uuid4())[:8])
 
@@ -155,37 +158,39 @@ class EmbeddingResponse(BaseModel):
     Field(min_length=1280, max_length=1280) guarantees exactly 1280 values —
     not just documentation, but enforced at serialisation time.
     """
+
     model_config = ConfigDict(strict=True)
 
-    embedding:     list[float] = Field(
+    embedding: list[float] = Field(
         ...,
-        min_length   = 1280,
-        max_length   = 1280,
-        description  = "1280-dim EfficientNet-B0 avgpool embedding",
+        min_length=1280,
+        max_length=1280,
+        description="1280-dim EfficientNet-B0 avgpool embedding",
     )
-    embedding_dim: int   = Field(1280)
-    model_hash:    str   = Field(...)
-    inference_ms:  float = Field(...)
-    request_id:    str   = Field(default_factory=lambda: str(uuid.uuid4())[:8])
+    embedding_dim: int = Field(1280)
+    model_hash: str = Field(...)
+    inference_ms: float = Field(...)
+    request_id: str = Field(default_factory=lambda: str(uuid.uuid4())[:8])
 
 
 # ── Serving Components Singleton ───────────────────────────────────────────────
 
+
 class ServingComponents(NamedTuple):
-    model:        ChestXRayClassifier
-    transform:    object                # transforms.Compose
-    threshold:    float
-    config:       dict
-    model_hash:   str                   # MD5 of best_model.pt bytes
-    config_drift: bool                  # True if current config ≠ training config
+    model: ChestXRayClassifier
+    transform: object  # transforms.Compose
+    threshold: float
+    config: dict
+    model_hash: str  # MD5 of best_model.pt bytes
+    config_drift: bool  # True if current config ≠ training config
 
 
-_components:       Optional[ServingComponents] = None
+_components: ServingComponents | None = None
 _serving_degraded: bool = False
-_degraded_reason:  str  = ""
+_degraded_reason: str = ""
 
 
-def get_serving_components() -> Optional[ServingComponents]:
+def get_serving_components() -> ServingComponents | None:
     """
     Lazy singleton: load and cache model, transform, threshold on first call.
 
@@ -212,9 +217,7 @@ def get_serving_components() -> Optional[ServingComponents]:
 
         # Load model (CPU only — Decision 18)
         model = ChestXRayClassifier(config)
-        model.load_state_dict(
-            torch.load(MODEL_PATH, map_location="cpu", weights_only=True)
-        )
+        model.load_state_dict(torch.load(MODEL_PATH, map_location="cpu", weights_only=True))
         model.eval()
 
         # Import preprocessing from dataset.py — same as evaluate.py (skew prevention)
@@ -228,21 +231,23 @@ def get_serving_components() -> Optional[ServingComponents]:
 
         # Config hash comparison — detect deployment drift
         current_config_hash = hashlib.md5(Path(CONFIG_PATH).read_bytes()).hexdigest()
-        config_drift        = False
-        metadata_path       = Path("artifacts/model_metadata.json")
+        config_drift = False
+        metadata_path = Path("artifacts/model_metadata.json")
 
         if metadata_path.exists():
             import json
-            metadata          = json.loads(metadata_path.read_text())
-            training_hash     = metadata.get("config_hash", "unknown")
-            config_drift      = (current_config_hash != training_hash)
+
+            metadata = json.loads(metadata_path.read_text())
+            training_hash = metadata.get("config_hash", "unknown")
+            config_drift = current_config_hash != training_hash
 
             if config_drift:
                 logger.warning(
                     "CONFIG DRIFT DETECTED: serving config hash (%s) differs from "
                     "training config hash (%s). Threshold was tuned for the training config. "
                     "Predictions may be miscalibrated.",
-                    current_config_hash[:8], training_hash[:8],
+                    current_config_hash[:8],
+                    training_hash[:8],
                 )
         else:
             logger.info(
@@ -257,28 +262,37 @@ def get_serving_components() -> Optional[ServingComponents]:
             "  Config hash: %s\n"
             "  Config drift: %s\n"
             "  Device:      CPU (Decision 18)",
-            MODEL_PATH, model_hash, threshold,
-            current_config_hash[:8], config_drift,
+            MODEL_PATH,
+            model_hash,
+            threshold,
+            current_config_hash[:8],
+            config_drift,
         )
 
         _components = ServingComponents(
-            model=model, transform=transform, threshold=threshold,
-            config=config, model_hash=model_hash, config_drift=config_drift,
+            model=model,
+            transform=transform,
+            threshold=threshold,
+            config=config,
+            model_hash=model_hash,
+            config_drift=config_drift,
         )
 
         return _components
 
     except Exception as e:
         _serving_degraded = True
-        _degraded_reason  = str(e)
+        _degraded_reason = str(e)
         logger.error(
             "SERVING DEGRADED — production bundle load failed:\n%s",
-            e, exc_info=True,
+            e,
+            exc_info=True,
         )
         return None
 
 
 # ── validate_image ─────────────────────────────────────────────────────────────
+
 
 def validate_image(image_bytes: bytes) -> Image.Image:
     """
@@ -313,14 +327,14 @@ def validate_image(image_bytes: bytes) -> Image.Image:
         )
 
     magic = image_bytes[:4]
-    is_png  = magic[:4] == b"\x89PNG"
+    is_png = magic[:4] == b"\x89PNG"
     is_jpeg = magic[:2] == b"\xff\xd8"
 
     if not (is_png or is_jpeg):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="File format not accepted. Only PNG and JPEG are supported. "
-                   "File magic bytes do not match PNG or JPEG.",
+            "File magic bytes do not match PNG or JPEG.",
         )
 
     # Step 3: PIL open + verify
@@ -340,8 +354,8 @@ def validate_image(image_bytes: bytes) -> Image.Image:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"Image dimensions ({w}×{h}px) exceed maximum "
-                   f"({MAX_IMAGE_DIM_PX}×{MAX_IMAGE_DIM_PX}px). "
-                   f"Chest X-rays should not exceed this size.",
+            f"({MAX_IMAGE_DIM_PX}×{MAX_IMAGE_DIM_PX}px). "
+            f"Chest X-rays should not exceed this size.",
         )
 
     # Step 5: Minimum spatial dimensions
@@ -349,19 +363,19 @@ def validate_image(image_bytes: bytes) -> Image.Image:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"Image too small ({w}×{h}px). "
-                   f"Minimum: {MIN_IMAGE_SIZE_PX}×{MIN_IMAGE_SIZE_PX}px.",
+            f"Minimum: {MIN_IMAGE_SIZE_PX}×{MIN_IMAGE_SIZE_PX}px.",
         )
 
     # Step 6: Not blank — compute variance on greyscale
     image_rgb = image.convert("RGB")
-    stat      = ImageStat.Stat(image_rgb.convert("L"))
-    variance  = stat.var[0]
+    stat = ImageStat.Stat(image_rgb.convert("L"))
+    variance = stat.var[0]
 
     if variance < MIN_IMAGE_VARIANCE:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"Image appears blank (variance={variance:.2f} < {MIN_IMAGE_VARIANCE}). "
-                   f"No diagnostic information present.",
+            f"No diagnostic information present.",
         )
 
     # Step 7: RGB conversion — already done above
@@ -369,6 +383,7 @@ def validate_image(image_bytes: bytes) -> Image.Image:
 
 
 # ── FastAPI Application ────────────────────────────────────────────────────────
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -435,6 +450,7 @@ app = FastAPI(
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
+
 @app.get("/health", response_model=HealthResponse)
 def health_check():
     """
@@ -444,12 +460,12 @@ def health_check():
     comps = _components
 
     return HealthResponse(
-        status       = "degraded" if _serving_degraded else "healthy",
-        model_loaded = comps is not None,
-        degraded     = _serving_degraded,
-        config_drift = comps.config_drift if comps else False,
-        threshold    = comps.threshold if comps else None,
-        model_hash   = comps.model_hash if comps else None,
+        status="degraded" if _serving_degraded else "healthy",
+        model_loaded=comps is not None,
+        degraded=_serving_degraded,
+        config_drift=comps.config_drift if comps else False,
+        threshold=comps.threshold if comps else None,
+        model_hash=comps.model_hash if comps else None,
     )
 
 
@@ -475,7 +491,7 @@ def predict_image(
       413: file too large
     """
     request_id = str(uuid.uuid4())[:8]
-    t_start    = time.perf_counter()   # monotonic — safe for Prometheus histograms
+    t_start = time.perf_counter()  # monotonic — safe for Prometheus histograms
 
     # ── 1. File size check BEFORE reading — OOM prevention ──────────────────────
     # file.size from Content-Length header. Check first, read after.
@@ -486,7 +502,7 @@ def predict_image(
         VALIDATION_FAILURE_COUNTER.labels(failure_type="size_limit").inc()
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=f"File size ({file.size // (1024*1024)}MB) exceeds 10MB limit.",
+            detail=f"File size ({file.size // (1024 * 1024)}MB) exceeds 10MB limit.",
         )
 
     # Synchronous read — correct in def (threadpool) route, not in async route
@@ -497,7 +513,7 @@ def predict_image(
         VALIDATION_FAILURE_COUNTER.labels(failure_type="size_limit").inc()
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=f"File size ({len(image_bytes) // (1024*1024)}MB) exceeds 10MB limit.",
+            detail=f"File size ({len(image_bytes) // (1024 * 1024)}MB) exceeds 10MB limit.",
         )
 
     # ── 2. validate_image BEFORE degraded check ──────────────────────────────────
@@ -533,15 +549,15 @@ def predict_image(
     # ── Inference ──────────────────────────────────────────────────────────────────
     # transform = get_inference_transform() from dataset.py
     # Same function as evaluate.py — training/serving skew structurally prevented
-    input_tensor = transform(image_pil).unsqueeze(0)   # (1, 3, 224, 224)
+    input_tensor = transform(image_pil).unsqueeze(0)  # (1, 3, 224, 224)
 
     with torch.no_grad():
-        logits    = model(input_tensor)                # (1, 2) raw logits
+        logits = model(input_tensor)  # (1, 2) raw logits
         prob_susp = torch.softmax(logits, dim=1)[0, 1].item()
 
     # ── Threshold + tier assignment ───────────────────────────────────────────
     predicted_label = int(prob_susp >= threshold)
-    prediction_str  = "Suspicious" if predicted_label == 1 else "Normal"
+    prediction_str = "Suspicious" if predicted_label == 1 else "Normal"
 
     # Triage tier: based on P(Suspicious) — routing decision
     # Model confidence: based on max(P, 1-P) — uncertainty measure
@@ -579,22 +595,29 @@ def predict_image(
     logger.info(
         "request_id=%s pred=%s prob=%.4f tier=%s conf=%.4f(%s) "
         "review=%s threshold=%.4f model_hash=%s ms=%.1f",
-        request_id, prediction_str, prob_susp, triage_tier,
-        model_confidence, conf_level, requires_review,
-        threshold, model_hash, inference_ms,
+        request_id,
+        prediction_str,
+        prob_susp,
+        triage_tier,
+        model_confidence,
+        conf_level,
+        requires_review,
+        threshold,
+        model_hash,
+        inference_ms,
     )
 
     return PredictionResponse(
-        prediction            = prediction_str,
-        probability           = round(prob_susp, 4),
-        triage_tier           = triage_tier,
-        model_confidence      = round(model_confidence, 4),
-        conf_level            = conf_level,
-        threshold_used        = round(threshold, 4),
-        requires_human_review = requires_review,
-        model_hash            = model_hash,
-        inference_ms          = round(inference_ms, 1),
-        request_id            = request_id,
+        prediction=prediction_str,
+        probability=round(prob_susp, 4),
+        triage_tier=triage_tier,
+        model_confidence=round(model_confidence, 4),
+        conf_level=conf_level,
+        threshold_used=round(threshold, 4),
+        requires_human_review=requires_review,
+        model_hash=model_hash,
+        inference_ms=round(inference_ms, 1),
+        request_id=request_id,
     )
 
 
@@ -665,13 +688,14 @@ def get_embedding(
     Only aggregate statistics (count, norm) are logged.
     """
     request_id = str(uuid.uuid4())[:8]
-    t_start    = time.perf_counter()
+    t_start = time.perf_counter()
 
     # ── Security boundary check ───────────────────────────────────────────────
     if x_internal_service != INTERNAL_SERVICE_VALUE:
         logger.warning(
             "request_id=%s /embeddings: unauthorized — incorrect or missing "
-            "X-Internal-Service header", request_id,
+            "X-Internal-Service header",
+            request_id,
         )
         raise HTTPException(
             status_code=403,
@@ -707,13 +731,11 @@ def get_embedding(
     # get_penultimate_features() is a pure functional operation:
     #   same input → same output, regardless of concurrent calls.
 
-    input_tensor = transform(image_pil).unsqueeze(0)   # (1, 3, 224, 224)
+    input_tensor = transform(image_pil).unsqueeze(0)  # (1, 3, 224, 224)
 
     with torch.no_grad():
         embedding_tensor = model.get_penultimate_features(input_tensor)
-        embedding_arr = (
-            embedding_tensor.detach().squeeze().cpu().numpy().astype(np.float32)
-        )
+        embedding_arr = embedding_tensor.detach().squeeze().cpu().numpy().astype(np.float32)
 
     # ── Validate finiteness ───────────────────────────────────────────────────
     if not np.isfinite(embedding_arr).all():
@@ -721,7 +743,9 @@ def get_embedding(
         inf_n = int(np.isinf(embedding_arr).sum())
         logger.error(
             "request_id=%s Non-finite embedding: nan=%d inf=%d",
-            request_id, nan_n, inf_n,
+            request_id,
+            nan_n,
+            inf_n,
         )
         raise HTTPException(500, detail="Embedding contains non-finite values.")
 
@@ -733,15 +757,17 @@ def get_embedding(
 
     logger.info(
         "request_id=%s embedding dim=%d norm=%.4f model_hash=%s ms=%.1f",
-        request_id, len(embedding_arr),
+        request_id,
+        len(embedding_arr),
         float(np.linalg.norm(embedding_arr)),
-        model_hash, inference_ms,
+        model_hash,
+        inference_ms,
     )
 
     return EmbeddingResponse(
-        embedding     = embedding_arr.tolist(),
-        embedding_dim = len(embedding_arr),
-        model_hash    = model_hash,
-        inference_ms  = round(inference_ms, 1),
-        request_id    = request_id,
+        embedding=embedding_arr.tolist(),
+        embedding_dim=len(embedding_arr),
+        model_hash=model_hash,
+        inference_ms=round(inference_ms, 1),
+        request_id=request_id,
     )

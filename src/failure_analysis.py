@@ -46,24 +46,25 @@ from src.evaluate import get_predictions, load_model_and_config
 logger = logging.getLogger(__name__)
 
 FAILURE_REPORT_PATH = "reports/failure_report.md"
-EDA_SUMMARY_PATH    = "reports/eda/eda_summary.json"
-THRESHOLD_PATH      = "artifacts/threshold.txt"
-FP_PARQUET_PATH     = "artifacts/fp_cases.parquet"
-FN_PARQUET_PATH     = "artifacts/fn_cases.parquet"
+EDA_SUMMARY_PATH = "reports/eda/eda_summary.json"
+THRESHOLD_PATH = "artifacts/threshold.txt"
+FP_PARQUET_PATH = "artifacts/fp_cases.parquet"
+FN_PARQUET_PATH = "artifacts/fn_cases.parquet"
 
 # Triage tier thresholds (routing decision — based on P(Suspicious))
-TRIAGE_TIER1_MIN    = 0.80   # High Suspicious confidence → auto-priority
-TRIAGE_TIER2_MIN    = 0.50   # Moderate → standard Suspicious queue
+TRIAGE_TIER1_MIN = 0.80  # High Suspicious confidence → auto-priority
+TRIAGE_TIER2_MIN = 0.50  # Moderate → standard Suspicious queue
 
 # Model confidence thresholds (uncertainty measure — based on max(P, 1-P))
-CONF_HIGH           = 0.80   # Highly certain (either direction)
-CONF_MODERATE       = 0.65   # Moderately certain
+CONF_HIGH = 0.80  # Highly certain (either direction)
+CONF_MODERATE = 0.65  # Moderately certain
 
 
 # ─── Tier and Confidence Assignment ──────────────────────────────────────────
 
+
 def assign_triage_and_confidence(
-    probs:     np.ndarray,
+    probs: np.ndarray,
     threshold: float,
 ) -> pd.DataFrame:
     """
@@ -97,9 +98,11 @@ def assign_triage_and_confidence(
     """
     # Triage tier: based on raw P(Suspicious)
     triage_tier = np.where(
-        probs >= TRIAGE_TIER1_MIN, "Tier1",
-        np.where(probs >= TRIAGE_TIER2_MIN, "Tier2",
-                 np.where(probs >= threshold, "Tier3", "Normal"))
+        probs >= TRIAGE_TIER1_MIN,
+        "Tier1",
+        np.where(
+            probs >= TRIAGE_TIER2_MIN, "Tier2", np.where(probs >= threshold, "Tier3", "Normal")
+        ),
     )
 
     # Model confidence: distance from maximum uncertainty (0.50)
@@ -107,25 +110,27 @@ def assign_triage_and_confidence(
 
     # Confidence level label
     conf_level = np.where(
-        confidence >= CONF_HIGH, "High",
-        np.where(confidence >= CONF_MODERATE, "Moderate", "Low")
+        confidence >= CONF_HIGH, "High", np.where(confidence >= CONF_MODERATE, "Moderate", "Low")
     )
 
-    return pd.DataFrame({
-        "triage_tier":       triage_tier,
-        "model_confidence":  confidence.round(4),
-        "conf_level":        conf_level,
-    })
+    return pd.DataFrame(
+        {
+            "triage_tier": triage_tier,
+            "model_confidence": confidence.round(4),
+            "conf_level": conf_level,
+        }
+    )
 
 
 # ─── Failure Case Extraction ──────────────────────────────────────────────────
 
+
 def extract_failure_cases(
     model,
     test_loader,
-    test_df:   pd.DataFrame,
+    test_df: pd.DataFrame,
     threshold: float,
-    device:    torch.device,
+    device: torch.device,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
     Run inference on the test set and extract all FP and FN cases.
@@ -146,22 +151,26 @@ def extract_failure_cases(
         (fp_df, fn_df, all_predictions_df)
     """
     labels, probs, _ = get_predictions(model, test_loader, device)
-    preds             = (probs >= threshold).astype(int)
+    preds = (probs >= threshold).astype(int)
 
-    tier_conf_df      = assign_triage_and_confidence(probs, threshold)
+    tier_conf_df = assign_triage_and_confidence(probs, threshold)
 
     result_df = test_df.copy().reset_index(drop=True)
-    result_df["probability"]      = probs
-    result_df["predicted_label"]  = preds
-    result_df["triage_tier"]      = tier_conf_df["triage_tier"].values
+    result_df["probability"] = probs
+    result_df["predicted_label"] = preds
+    result_df["triage_tier"] = tier_conf_df["triage_tier"].values
     result_df["model_confidence"] = tier_conf_df["model_confidence"].values
-    result_df["conf_level"]       = tier_conf_df["conf_level"].values
+    result_df["conf_level"] = tier_conf_df["conf_level"].values
 
     def _error_type(row):
-        if   row["binary_label"] == 0 and row["predicted_label"] == 1: return "FP"
-        elif row["binary_label"] == 1 and row["predicted_label"] == 0: return "FN"
-        elif row["binary_label"] == 1 and row["predicted_label"] == 1: return "TP"
-        else:                                                            return "TN"
+        if row["binary_label"] == 0 and row["predicted_label"] == 1:
+            return "FP"
+        elif row["binary_label"] == 1 and row["predicted_label"] == 0:
+            return "FN"
+        elif row["binary_label"] == 1 and row["predicted_label"] == 1:
+            return "TP"
+        else:
+            return "TN"
 
     result_df["error_type"] = result_df.apply(_error_type, axis=1)
 
@@ -175,7 +184,8 @@ def extract_failure_cases(
         len(result_df),
         (result_df["error_type"] == "TP").sum(),
         (result_df["error_type"] == "TN").sum(),
-        len(fp_df), len(fn_df),
+        len(fp_df),
+        len(fn_df),
         len(fp_df) / max(1, (result_df["binary_label"] == 0).sum()) * 100,
         len(fn_df) / max(1, (result_df["binary_label"] == 1).sum()) * 100,
     )
@@ -185,9 +195,10 @@ def extract_failure_cases(
 
 # ─── Confidence Pattern Analysis ──────────────────────────────────────────────
 
+
 def analyse_confidence_patterns(
-    fp_df:  pd.DataFrame,
-    fn_df:  pd.DataFrame,
+    fp_df: pd.DataFrame,
+    fn_df: pd.DataFrame,
     all_df: pd.DataFrame,
 ) -> dict:
     """
@@ -214,17 +225,22 @@ def analyse_confidence_patterns(
     4. Low-confidence FPs (confidence < 0.65):
        Expected at a low threshold. Not concerning unless dominant.
     """
+
     def conf_breakdown(df, name):
         if len(df) == 0:
-            return {f"{name}_high_conf_count": 0, f"{name}_mod_conf_count": 0,
-                    f"{name}_low_conf_count": 0, f"{name}_mean_confidence": float("nan")}
+            return {
+                f"{name}_high_conf_count": 0,
+                f"{name}_mod_conf_count": 0,
+                f"{name}_low_conf_count": 0,
+                f"{name}_mean_confidence": float("nan"),
+            }
 
         counts = df["conf_level"].value_counts().to_dict()
 
         return {
             f"{name}_high_conf_count": int(counts.get("High", 0)),
-            f"{name}_mod_conf_count":  int(counts.get("Moderate", 0)),
-            f"{name}_low_conf_count":  int(counts.get("Low", 0)),
+            f"{name}_mod_conf_count": int(counts.get("Moderate", 0)),
+            f"{name}_low_conf_count": int(counts.get("Low", 0)),
             f"{name}_mean_confidence": round(float(df["model_confidence"].mean()), 4),
             f"{name}_mean_probability": round(float(df["probability"].mean()), 4),
         }
@@ -249,10 +265,11 @@ def analyse_confidence_patterns(
 
 # ─── Demographic Breakdown ────────────────────────────────────────────────────
 
+
 def analyse_demographic_breakdown(
-    all_df:      pd.DataFrame,
+    all_df: pd.DataFrame,
     n_bootstrap: int = 500,
-    seed:        int = 42,
+    seed: int = 42,
 ) -> dict:
     """
     Compute recall by gender and age group with bootstrap 95% CI.
@@ -278,7 +295,7 @@ def analyse_demographic_breakdown(
         dict with recall, CI, and count per subgroup
     """
     result = {}
-    rng    = np.random.default_rng(seed=seed)
+    rng = np.random.default_rng(seed=seed)
 
     def _subgroup_recall_ci(subset_df, n_boot):
         """Compute recall and bootstrap CI for a subgroup DataFrame."""
@@ -289,10 +306,10 @@ def analyse_demographic_breakdown(
         recall = float((suspicious["predicted_label"] == 1).sum() / len(suspicious))
 
         # Bootstrap
-        n      = len(suspicious)
-        boots  = []
+        n = len(suspicious)
+        boots = []
         for _ in range(n_boot):
-            idx    = rng.choice(n, n, replace=True)
+            idx = rng.choice(n, n, replace=True)
             sample = suspicious.iloc[idx]
             boots.append(float((sample["predicted_label"] == 1).sum() / n))
 
@@ -307,13 +324,17 @@ def analyse_demographic_breakdown(
             subset = all_df[all_df["Patient Gender"] == gender]
             recall, ci_lo, ci_hi = _subgroup_recall_ci(subset, n_bootstrap)
 
-            result[f"recall_gender_{gender}"]    = round(recall, 4) if not np.isnan(recall) else None
+            result[f"recall_gender_{gender}"] = round(recall, 4) if not np.isnan(recall) else None
             result[f"recall_gender_{gender}_ci"] = f"[{ci_lo:.4f}, {ci_hi:.4f}]"
-            result[f"count_gender_{gender}"]     = int(len(subset))
+            result[f"count_gender_{gender}"] = int(len(subset))
 
             logger.info(
                 "Gender %s: recall=%.4f CI=[%.4f, %.4f] n=%d",
-                gender, recall if not np.isnan(recall) else -1, ci_lo, ci_hi, len(subset)
+                gender,
+                recall if not np.isnan(recall) else -1,
+                ci_lo,
+                ci_hi,
+                len(subset),
             )
     else:
         logger.warning("Patient Gender not in test_df — skipping gender breakdown.")
@@ -323,20 +344,24 @@ def analyse_demographic_breakdown(
         age_groups = [
             ("under_40", all_df["Patient Age"] < 40),
             ("40_to_60", (all_df["Patient Age"] >= 40) & (all_df["Patient Age"] < 60)),
-            ("over_60",  all_df["Patient Age"] >= 60),
+            ("over_60", all_df["Patient Age"] >= 60),
         ]
 
         for label, mask in age_groups:
             subset = all_df[mask]
             recall, ci_lo, ci_hi = _subgroup_recall_ci(subset, n_bootstrap)
 
-            result[f"recall_age_{label}"]    = round(recall, 4) if not np.isnan(recall) else None
+            result[f"recall_age_{label}"] = round(recall, 4) if not np.isnan(recall) else None
             result[f"recall_age_{label}_ci"] = f"[{ci_lo:.4f}, {ci_hi:.4f}]"
-            result[f"count_age_{label}"]     = int(len(subset))
+            result[f"count_age_{label}"] = int(len(subset))
 
             logger.info(
                 "Age %s: recall=%.4f CI=[%.4f, %.4f] n=%d",
-                label, recall if not np.isnan(recall) else -1, ci_lo, ci_hi, len(subset)
+                label,
+                recall if not np.isnan(recall) else -1,
+                ci_lo,
+                ci_hi,
+                len(subset),
             )
     else:
         logger.warning("Patient Age not in test_df — skipping age breakdown.")
@@ -346,10 +371,11 @@ def analyse_demographic_breakdown(
 
 # ─── View Position Error Analysis ─────────────────────────────────────────────
 
+
 def analyse_view_position_errors(
-    fp_df:       pd.DataFrame,
-    fn_df:       pd.DataFrame,
-    all_df:      pd.DataFrame,
+    fp_df: pd.DataFrame,
+    fn_df: pd.DataFrame,
+    all_df: pd.DataFrame,
     eda_summary: dict,
 ) -> dict:
     """
@@ -378,62 +404,70 @@ def analyse_view_position_errors(
     result = {}
 
     for pos in ["AP", "PA"]:
-        subset    = all_df[all_df["View Position"] == pos]
+        subset = all_df[all_df["View Position"] == pos]
         suspicious = subset[subset["binary_label"] == 1]
-        normal     = subset[subset["binary_label"] == 0]
+        _ = subset[subset["binary_label"] == 0]
 
         # Recall
         recall = (
             float((suspicious["predicted_label"] == 1).sum() / len(suspicious))
-            if len(suspicious) > 0 else float("nan")
+            if len(suspicious) > 0
+            else float("nan")
         )
 
         # Precision (among predicted Suspicious in this view)
-        pred_susp   = subset[subset["predicted_label"] == 1]
-        precision   = (
+        pred_susp = subset[subset["predicted_label"] == 1]
+        precision = (
             float((pred_susp["binary_label"] == 1).sum() / len(pred_susp))
-            if len(pred_susp) > 0 else float("nan")
+            if len(pred_susp) > 0
+            else float("nan")
         )
 
-        result[f"recall_{pos}"]    = round(recall, 4)
+        result[f"recall_{pos}"] = round(recall, 4)
         result[f"precision_{pos}"] = round(precision, 4)
-        result[f"fn_{pos}_count"]  = int((all_df[(all_df["View Position"] == pos) &
-                                                 (all_df["error_type"] == "FN")].shape[0]))
-        result[f"fp_{pos}_count"]  = int((all_df[(all_df["View Position"] == pos) &
-                                                 (all_df["error_type"] == "FP")].shape[0]))
-        result[f"n_{pos}"]         = int(len(subset))
+        result[f"fn_{pos}_count"] = int(
+            all_df[(all_df["View Position"] == pos) & (all_df["error_type"] == "FN")].shape[0]
+        )
+        result[f"fp_{pos}_count"] = int(
+            all_df[(all_df["View Position"] == pos) & (all_df["error_type"] == "FP")].shape[0]
+        )
+        result[f"n_{pos}"] = int(len(subset))
 
         # Confidence distribution of FPs for this view
-        pos_fp = fp_df[fp_df["View Position"] == pos] if "View Position" in fp_df.columns else pd.DataFrame()
+        pos_fp = (
+            fp_df[fp_df["View Position"] == pos]
+            if "View Position" in fp_df.columns
+            else pd.DataFrame()
+        )
         if len(pos_fp) > 0:
             high_conf_fp = int((pos_fp["conf_level"] == "High").sum())
             result[f"fp_{pos}_high_conf"] = high_conf_fp
 
         logger.info(
             "%s: recall=%.4f  precision=%.4f  FN=%d  FP=%d  n=%d",
-            pos, recall, precision,
+            pos,
+            recall,
+            precision,
             result.get(f"fn_{pos}_count", 0),
             result.get(f"fp_{pos}_count", 0),
             len(subset),
         )
 
     # Cross-reference with L3 EDA finding
-    view_eda  = eda_summary.get("view_position", {})
-    eda_gap   = view_eda.get("gap_pp")
+    view_eda = eda_summary.get("view_position", {})
+    eda_gap = view_eda.get("gap_pp")
     risk_flag = view_eda.get("risk_flag", False)
 
-    result["eda_ap_pa_gap_pp"]    = eda_gap
+    result["eda_ap_pa_gap_pp"] = eda_gap
     result["eda_ap_pa_risk_flag"] = risk_flag
 
     if risk_flag and eda_gap:
-        actual_recall_gap = abs(
-            result.get("recall_AP", 0) - result.get("recall_PA", 0)
-        ) * 100
+        actual_recall_gap = abs(result.get("recall_AP", 0) - result.get("recall_PA", 0)) * 100
 
         logger.info(
-            "EDA AP/PA risk flag was raised (gap=%.1fpp). "
-            "Actual recall gap in test set: %.1fpp",
-            eda_gap, actual_recall_gap,
+            "EDA AP/PA risk flag was raised (gap=%.1fpp). Actual recall gap in test set: %.1fpp",
+            eda_gap,
+            actual_recall_gap,
         )
 
     return result
@@ -441,10 +475,11 @@ def analyse_view_position_errors(
 
 # ─── Full Failure Analysis Pipeline ───────────────────────────────────────────
 
+
 def run_failure_analysis(
     config_path: str,
-    test_df:     pd.DataFrame,
-    run_id:      str,
+    test_df: pd.DataFrame,
+    run_id: str,
 ) -> dict:
     """
     Orchestrate the complete failure analysis pipeline.
@@ -459,8 +494,8 @@ def run_failure_analysis(
       7. Log all stats to MLflow (same run as L6/L7)
       8. Write failure_report.md
     """
-    config    = yaml.safe_load(open(config_path))
-    device    = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    config = yaml.safe_load(open(config_path))
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     threshold = float(Path(THRESHOLD_PATH).read_text().strip())
 
     logger.info("Starting failure analysis. threshold=%.4f", threshold)
@@ -473,22 +508,18 @@ def run_failure_analysis(
         logger.warning("%s not found. AP/PA cross-reference will be limited.", EDA_SUMMARY_PATH)
 
     # ── Build test DataLoader ─────────────────────────────────────────────────
-    _, _, test_loader = create_dataloaders(
-        test_df, test_df, test_df, config
-    )
+    _, _, test_loader = create_dataloaders(test_df, test_df, test_df, config)
 
     # ── Load model ────────────────────────────────────────────────────────────
     model, _ = load_model_and_config(config_path, device)
 
     # ── Extract failure cases ─────────────────────────────────────────────────
-    fp_df, fn_df, all_df = extract_failure_cases(
-        model, test_loader, test_df, threshold, device
-    )
+    fp_df, fn_df, all_df = extract_failure_cases(model, test_loader, test_df, threshold, device)
 
     # ── Analyse patterns ──────────────────────────────────────────────────────
-    conf_stats  = analyse_confidence_patterns(fp_df, fn_df, all_df)
+    conf_stats = analyse_confidence_patterns(fp_df, fn_df, all_df)
     demog_stats = analyse_demographic_breakdown(all_df)
-    view_stats  = analyse_view_position_errors(fp_df, fn_df, all_df, eda_summary)
+    view_stats = analyse_view_position_errors(fp_df, fn_df, all_df, eda_summary)
 
     # ── Save failure case artifacts ───────────────────────────────────────────
     Path("artifacts").mkdir(exist_ok=True)
@@ -498,37 +529,50 @@ def run_failure_analysis(
     logger.info("Saved %s and %s", FP_PARQUET_PATH, FN_PARQUET_PATH)
 
     all_stats = {
-        "fp_count":  len(fp_df),
-        "fn_count":  len(fn_df),
-        "tp_count":  int((all_df["error_type"] == "TP").sum()),
-        "tn_count":  int((all_df["error_type"] == "TN").sum()),
+        "fp_count": len(fp_df),
+        "fn_count": len(fn_df),
+        "tp_count": int((all_df["error_type"] == "TP").sum()),
+        "tn_count": int((all_df["error_type"] == "TN").sum()),
         "threshold": threshold,
         **conf_stats,
-        **{k: v for k, v in demog_stats.items()
-           if isinstance(v, (int, float)) and v is not None},
-        **{k: v for k, v in view_stats.items()
-           if isinstance(v, (int, float, bool)) and v is not None},
+        **{k: v for k, v in demog_stats.items() if isinstance(v, (int, float)) and v is not None},
+        **{
+            k: v
+            for k, v in view_stats.items()
+            if isinstance(v, (int, float, bool)) and v is not None
+        },
     }
 
     # ── Log to MLflow ─────────────────────────────────────────────────────────
     with mlflow.start_run(run_id=run_id):
         mlflow.log_metrics(
-            {k: float(v) for k, v in all_stats.items()
-             if isinstance(v, (int, float)) and not isinstance(v, bool)
-             and not (isinstance(v, float) and np.isnan(v))}
+            {
+                k: float(v)
+                for k, v in all_stats.items()
+                if isinstance(v, (int, float))
+                and not isinstance(v, bool)
+                and not (isinstance(v, float) and np.isnan(v))
+            }
         )
 
     # ── Write failure report ──────────────────────────────────────────────────
     _write_failure_report(
-        fp_df=fp_df, fn_df=fn_df, all_df=all_df,
-        conf_stats=conf_stats, demog_stats=demog_stats,
-        view_stats=view_stats, eda_summary=eda_summary,
-        threshold=threshold, config=config,
+        fp_df=fp_df,
+        fn_df=fn_df,
+        all_df=all_df,
+        conf_stats=conf_stats,
+        demog_stats=demog_stats,
+        view_stats=view_stats,
+        eda_summary=eda_summary,
+        threshold=threshold,
+        config=config,
     )
 
     logger.info(
         "Failure analysis complete. FP=%d  FN=%d  Report: %s",
-        len(fp_df), len(fn_df), FAILURE_REPORT_PATH,
+        len(fp_df),
+        len(fn_df),
+        FAILURE_REPORT_PATH,
     )
 
     return all_stats
@@ -536,15 +580,22 @@ def run_failure_analysis(
 
 # ─── Report Writer ─────────────────────────────────────────────────────────────
 
+
 def _write_failure_report(
-    fp_df, fn_df, all_df,
-    conf_stats, demog_stats, view_stats,
-    eda_summary, threshold, config,
+    fp_df,
+    fn_df,
+    all_df,
+    conf_stats,
+    demog_stats,
+    view_stats,
+    eda_summary,
+    threshold,
+    config,
 ) -> None:
     """Write the complete failure analysis report."""
 
-    n_susp  = int((all_df["binary_label"] == 1).sum())
-    n_norm  = int((all_df["binary_label"] == 0).sum())
+    n_susp = int((all_df["binary_label"] == 1).sum())
+    n_norm = int((all_df["binary_label"] == 0).sum())
     fp_rate = len(fp_df) / max(1, n_norm) * 100
     fn_rate = len(fn_df) / max(1, n_susp) * 100
 
@@ -554,15 +605,15 @@ def _write_failure_report(
             return f"No {label} cases."
 
         high = conf_stats.get(f"{prefix}_high_conf_count", 0)
-        mod  = conf_stats.get(f"{prefix}_mod_conf_count",  0)
-        low  = conf_stats.get(f"{prefix}_low_conf_count",  0)
-        mc   = conf_stats.get(f"{prefix}_mean_confidence", float("nan"))
-        mp   = conf_stats.get(f"{prefix}_mean_probability", float("nan"))
+        mod = conf_stats.get(f"{prefix}_mod_conf_count", 0)
+        low = conf_stats.get(f"{prefix}_low_conf_count", 0)
+        mc = conf_stats.get(f"{prefix}_mean_confidence", float("nan"))
+        mp = conf_stats.get(f"{prefix}_mean_probability", float("nan"))
 
         return (
-            f"High confidence (≥0.80): {high} ({high/n_total*100:.1f}%) | "
-            f"Moderate (0.65–0.79): {mod} ({mod/n_total*100:.1f}%) | "
-            f"Low (<0.65): {low} ({low/n_total*100:.1f}%)\n"
+            f"High confidence (≥0.80): {high} ({high / n_total * 100:.1f}%) | "
+            f"Moderate (0.65–0.79): {mod} ({mod / n_total * 100:.1f}%) | "
+            f"Low (<0.65): {low} ({low / n_total * 100:.1f}%)\n"
             f"  Mean model_confidence: {mc:.4f} | Mean P(Suspicious): {mp:.4f}"
         )
 
@@ -602,16 +653,18 @@ def _write_failure_report(
                 f"n={view_stats.get(f'n_{pos}', '?')}"
             )
 
-    eda_gap   = view_stats.get("eda_ap_pa_gap_pp")
+    eda_gap = view_stats.get("eda_ap_pa_gap_pp")
     risk_flag = view_stats.get("eda_ap_pa_risk_flag", False)
-    eda_line  = (
+    eda_line = (
         f"L3 EDA AP/PA risk flag: {'⚠️ RAISED' if risk_flag else '✅ Not raised'} "
-        f"(EDA gap={eda_gap:.1f}pp)" if eda_gap is not None else "L3 EDA summary not available."
+        f"(EDA gap={eda_gap:.1f}pp)"
+        if eda_gap is not None
+        else "L3 EDA summary not available."
     )
 
     # ── FN sample for clinical advisor (includes Finding Labels) ─────────────
-    fn_sample  = fn_df.nsmallest(10, "model_confidence")  # most confident wrong FNs first
-    fn_lines   = []
+    fn_sample = fn_df.nsmallest(10, "model_confidence")  # most confident wrong FNs first
+    fn_lines = []
 
     for _, row in fn_sample.iterrows():
         finding_label = str(row.get("Finding Labels", "Unknown"))[:40]
@@ -628,7 +681,7 @@ def _write_failure_report(
 
     fn_block = "\n".join(fn_lines) if fn_lines else "  No false negatives in test set."
 
-    report = f"""# Failure Analysis Report — P4 Radiology AI
+    _ = f"""# Failure Analysis Report — P4 Radiology AI
 
 ## 60 Seconds Academy — AI & ML
 
