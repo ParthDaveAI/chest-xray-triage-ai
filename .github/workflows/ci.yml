@@ -70,7 +70,7 @@ jobs:
 
       - name: Install dependencies (frozen)
 
-        run: uv sync --frozen
+        run: uv sync --frozen --extra dev
 
       - name: Lint
 
@@ -121,7 +121,7 @@ jobs:
 
       - name: Install dependencies (frozen)
 
-        run: uv sync --frozen
+        run: uv sync --frozen --extra dev
 
       - name: Run tests (36 tests — no model artifacts required)
 
@@ -335,7 +335,7 @@ jobs:
 
       - name: Install dependencies (frozen)
 
-        run: uv sync --frozen
+        run: uv sync --frozen --extra dev
 
       - name: Run pip-audit
 
