@@ -172,7 +172,7 @@ jobs:
 
         run: |
 
-          docker buildx build --load \
+          docker build \
 
             --tag p4-radiology-serving:ci-${{ github.sha }} \
 
