@@ -166,19 +166,13 @@ jobs:
 
           echo "0.370000" > artifacts/threshold.txt
 
-          python3 -c "
-
-          import struct, os
-
-          open('artifacts/best_model.pt', 'wb').write(b'CI_STUB_NOT_A_REAL_MODEL')
-
-          "
+          python3 -c "open('artifacts/best_model.pt', 'wb').write(b'CI_STUB_NOT_A_REAL_MODEL')"
 
       - name: Build Docker image
 
         run: |
 
-          docker build \
+          docker buildx build --load \
 
             --tag p4-radiology-serving:ci-${{ github.sha }} \
 
