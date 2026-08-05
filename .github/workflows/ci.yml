@@ -1,413 +1,174 @@
 # CI Pipeline — P4 Radiology AI
-
 # Five jobs: lint → unit-and-tier1 → [build-docker ‖ security] → ci-summary
-
-# Runtime: ~5 minutes. No model training. No GPU required.
-
-# Triggers: push to main, pull requests to main.
 
 name: CI
 
 on:
-
   push:
-
     branches: [main]
-
   pull_request:
-
     branches: [main]
 
 concurrency:
-
   group: ${{ github.workflow }}-${{ github.ref }}
-
   cancel-in-progress: true
 
 env:
-
-  # CPU-only PyTorch index — must be set here so all jobs use it
-
   UV_EXTRA_INDEX_URL: https://download.pytorch.org/whl/cpu
 
 jobs:
 
-  # ── Job 1: Lint ──────────────────────────────────────────────────────────────
-
   lint:
-
     name: Lint (ruff)
-
     runs-on: ubuntu-latest
-
     timeout-minutes: 10
-
     steps:
-
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
-
         with:
-
           python-version: "3.11"
-
       - name: Install uv
-
         run: pip install --quiet uv
-
       - name: Restore cache
-
         uses: actions/cache@v4
-
         with:
-
           path: ~/.cache/uv
-
           key: ${{ runner.os }}-uv-${{ hashFiles('uv.lock') }}
-
           restore-keys: ${{ runner.os }}-uv-
-
-      - name: Install dependencies (frozen)
-
+      - name: Install dependencies
         run: uv sync --frozen --extra dev
-
       - name: Lint
-
         run: uv run ruff check src/ tests/
-
       - name: Format check
-
         run: uv run ruff format --check src/ tests/
 
-
-  # ── Job 2: Unit and Tier 1 Integration Tests ─────────────────────────────────
-
   unit-and-tier1:
-
     name: Tests (unit + tier1)
-
     runs-on: ubuntu-latest
-
     needs: [lint]
-
     timeout-minutes: 15
-
     steps:
-
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
-
         with:
-
           python-version: "3.11"
-
       - name: Install uv
-
         run: pip install --quiet uv
-
       - name: Restore cache
-
         uses: actions/cache@v4
-
         with:
-
           path: ~/.cache/uv
-
           key: ${{ runner.os }}-uv-${{ hashFiles('uv.lock') }}
-
           restore-keys: ${{ runner.os }}-uv-
-
-      - name: Install dependencies (frozen)
-
+      - name: Install dependencies
         run: uv sync --frozen --extra dev
-
-      - name: Run tests (36 tests — no model artifacts required)
-
+      - name: Run tests
         run: uv run pytest -m "unit or tier1" -v --tb=short
-
       - name: Upload test results
-
         if: always()
-
         uses: actions/upload-artifact@v4
-
         with:
-
           name: ci-test-results-${{ github.run_id }}
-
           path: .pytest_cache/
-
           retention-days: 7
 
-
-  # ── Job 3: Docker Build (CPU-only) ────────────────────────────────────────────
-
   build-docker:
-
     name: Docker Build (CPU-only)
-
     runs-on: ubuntu-latest
-
     needs: [unit-and-tier1]
-
     timeout-minutes: 20
-
     steps:
-
       - uses: actions/checkout@v4
-
       - name: Create stub artifacts for Docker build
-
         run: |
-
           mkdir -p artifacts
-
           echo "0.370000" > artifacts/threshold.txt
-
           python3 -c "open('artifacts/best_model.pt', 'wb').write(b'CI_STUB_NOT_A_REAL_MODEL')"
-
       - name: Build Docker image
-
-        run: |
-
-          docker build \
-
-            --tag p4-radiology-serving:ci-${{ github.sha }} \
-
-            --label "git-commit=${{ github.sha }}" \
-
-            .
-
+        run: docker build --tag p4-radiology-serving:ci-${{ github.sha }} --label "git-commit=${{ github.sha }}" .
       - name: Start container and verify health endpoint
-
         run: |
-
-          docker run -d \
-
-            --name p4-ci-test \
-
-            -p 8000:8000 \
-
-            p4-radiology-serving:ci-${{ github.sha }}
-
-          echo "Waiting for container to be ready..."
-
+          docker run -d --name p4-ci-test -p 8000:8000 p4-radiology-serving:ci-${{ github.sha }}
+          echo "Waiting for container..."
           for i in $(seq 1 20); do
-
-            STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-
-              http://localhost:8000/health 2>/dev/null || echo "000")
-
-            if [ "$STATUS" = "200" ]; then
-
-              echo "Container ready after ${i}s"
-
-              break
-
-            fi
-
-            if [ "$i" = "20" ]; then
-
-              echo "ERROR: Container not ready after 20s (last status: $STATUS)"
-
-              docker logs p4-ci-test
-
-              exit 1
-
-            fi
-
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/health 2>/dev/null || echo "000")
+            if [ "$STATUS" = "200" ]; then echo "Ready after ${i}s"; break; fi
+            if [ "$i" = "20" ]; then echo "ERROR: not ready after 20s"; docker logs p4-ci-test; exit 1; fi
             sleep 1
-
           done
-
           RESPONSE=$(curl -s http://localhost:8000/health)
-
           echo "Health response: $RESPONSE"
-
-          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/health)
-
-          if [ "$HTTP_STATUS" != "200" ]; then
-
-            echo "ERROR: Health endpoint returned $HTTP_STATUS, expected 200"
-
-            docker logs p4-ci-test
-
-            exit 1
-
-          fi
-
           if ! echo "$RESPONSE" | python3 -c "import sys,json; d=json.load(sys.stdin); assert 'degraded' in d"; then
-
             echo "ERROR: Health response missing 'degraded' field"
-
             exit 1
-
           fi
-
           echo "Health endpoint verified."
-
           docker stop p4-ci-test
-
-          docker rm   p4-ci-test
-
+          docker rm p4-ci-test
       - name: Verify CPU-only PyTorch wheel
-
         run: |
-
-          docker run --rm p4-radiology-serving:ci-${{ github.sha }} \
-
-            python3 -c "
-
+          docker run --rm p4-radiology-serving:ci-${{ github.sha }} python3 -c "
           import subprocess, sys
-
-          result = subprocess.run(
-
-              ['pip', 'show', 'torch'], capture_output=True, text=True
-
-          )
-
-          version_line = [l for l in result.stdout.splitlines() if l.startswith('Version:')]
-
-          version = version_line[0].split(':', 1)[1].strip() if version_line else 'unknown'
-
+          result = subprocess.run(['pip', 'show', 'torch'], capture_output=True, text=True)
+          lines = {l.split(':')[0].strip(): l.split(':', 1)[1].strip() for l in result.stdout.splitlines() if ':' in l}
+          version = lines.get('Version', 'unknown')
           print(f'Torch version: {version}')
-
           if '+cu' in version:
-
-              print('ERROR: CUDA-enabled torch detected. Expected CPU-only.')
-
+              print('ERROR: CUDA torch detected')
               sys.exit(1)
-
-          print('CPU-only torch confirmed (no +cu suffix).')
-
+          print('CPU-only torch confirmed.')
           "
 
-
-  # ── Job 4: Security Scan ──────────────────────────────────────────────────────
-
   security:
-
     name: Security (pip-audit)
-
     runs-on: ubuntu-latest
-
     needs: [unit-and-tier1]
-
     timeout-minutes: 10
-
     steps:
-
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
-
         with:
-
           python-version: "3.11"
-
       - name: Install uv and pip-audit
-
         run: pip install --quiet uv pip-audit
-
       - name: Restore cache
-
         uses: actions/cache@v4
-
         with:
-
           path: ~/.cache/uv
-
           key: ${{ runner.os }}-uv-${{ hashFiles('uv.lock') }}
-
           restore-keys: ${{ runner.os }}-uv-
-
-      - name: Install dependencies (frozen)
-
+      - name: Install dependencies
         run: uv sync --frozen --extra dev
-
       - name: Run pip-audit
-
-        id: audit
-
         continue-on-error: true
-
-        run: |
-
-          uv run pip-audit --format=markdown --output=security-report.md
-
-          echo "exit_code=$?" >> $GITHUB_OUTPUT
-
-      - name: Report audit result
-
-        run: |
-
-          echo "=== Security Scan Report ==="
-
-          cat security-report.md 2>/dev/null || echo "No vulnerabilities found"
-
+        run: uv run pip-audit --format=markdown --output=security-report.md
+      - name: Show report
+        run: cat security-report.md 2>/dev/null || echo "No vulnerabilities found"
       - name: Upload security report
-
         if: always()
-
         uses: actions/upload-artifact@v4
-
         with:
-
           name: security-report-${{ github.run_id }}
-
           path: security-report.md
-
           retention-days: 30
 
-
-  # ── Job 5: CI Summary ────────────────────────────────────────────────────────
-
   ci-summary:
-
     name: CI Summary (all checks)
-
     runs-on: ubuntu-latest
-
     needs: [lint, unit-and-tier1, build-docker, security]
-
     if: always()
-
     timeout-minutes: 5
-
     steps:
-
       - name: Check all jobs passed
-
         run: |
-
-          echo "CI Summary"
-
-          echo "=========="
-
-          echo "lint:            ${{ needs.lint.result }}"
-
-          echo "unit-and-tier1:  ${{ needs.unit-and-tier1.result }}"
-
-          echo "build-docker:    ${{ needs.build-docker.result }}"
-
-          echo "security:        ${{ needs.security.result }}"
-
+          echo "lint:           ${{ needs.lint.result }}"
+          echo "unit-and-tier1: ${{ needs.unit-and-tier1.result }}"
+          echo "build-docker:   ${{ needs.build-docker.result }}"
+          echo "security:       ${{ needs.security.result }}"
           if [ "${{ needs.lint.result }}" != "success" ] || \
-
              [ "${{ needs.unit-and-tier1.result }}" != "success" ] || \
-
              [ "${{ needs.build-docker.result }}" != "success" ]; then
-
-            echo ""
-
-            echo "RESULT: CI FAILED — one or more required jobs did not pass."
-
+            echo "RESULT: CI FAILED"
             exit 1
-
           fi
-
-          echo ""
-
-          echo "RESULT: CI PASSED — all required checks passed."
+          echo "RESULT: CI PASSED"
